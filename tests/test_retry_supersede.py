@@ -14,12 +14,12 @@ def test_failed_verification_can_retry_same_task(tmp_path):
 
     failed = run_stage(repo, "do", task_id="T1")
     assert failed.status == "failed"
-    assert failed.recommended_next == "/loom:do T1"
+    assert failed.recommended_next == "/loom-do T1"
 
     write_project_config(repo, 'python -c "raise SystemExit(0)"')
     retried = run_stage(repo, "do", task_id="T1")
     assert retried.status == "ok"
-    assert retried.recommended_next == "/loom:do T2"
+    assert retried.recommended_next == "/loom-do T2"
 
     store = SQLiteStore(repo)
     session = store.branch_session("master")

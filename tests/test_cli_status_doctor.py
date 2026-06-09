@@ -24,8 +24,23 @@ def test_cli_json_flag_emits_compact_json(tmp_path, capsys):
 
     assert exit_code == 0
     assert payload["status"] == "ok"
-    assert payload["recommended_next"] == "/loom:plan"
+    assert payload["recommended_next"] == "/loom-plan"
 
+def test_init_accepts_integration_flags(tmp_path, capsys):
+    exit_code = main([
+        "init",
+        "--cwd",
+        str(tmp_path),
+        "--claude-code",
+        "--codex",
+        "--opencode",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 0
+    assert payload["integrations"] == ["claude-code", "codex", "opencode"]
 
 def test_status_reports_branch_summary(tmp_path, capsys):
     main(["init", "--cwd", str(tmp_path)])
@@ -37,7 +52,7 @@ def test_status_reports_branch_summary(tmp_path, capsys):
 
     assert exit_code == 0
     assert "Status: ok" in output
-    assert "Recommended next: /loom:plan" in output
+    assert "Recommended next: /loom-plan" in output
     assert "Artifacts:" in output
 
 

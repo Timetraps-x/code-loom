@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from codeloom.app.claude_plugin import install_claude_plugin
+from codeloom.app.claude_plugin import install_claude_skills
 
 from codeloom.persistence.sqlite import SQLiteStore
 
@@ -48,7 +48,7 @@ class ProjectConfig:
     commands: dict[str, str] = field(default_factory=lambda: {"test": "", "lint": "", "typecheck": "", "build": ""})
 
 
-def init_project(cwd: Path, force: bool = False) -> tuple[bool, str]:
+def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None) -> tuple[bool, str]:
     repo_path = cwd.resolve()
     project_path = repo_path / "project.yml"
     if project_path.exists() and not force:
@@ -58,7 +58,9 @@ def init_project(cwd: Path, force: bool = False) -> tuple[bool, str]:
         created = True
     (repo_path / ".loom" / "runs").mkdir(parents=True, exist_ok=True)
     SQLiteStore(repo_path).initialize()
-    install_claude_plugin(repo_path, force=force)
+    selected_integrations = integrations or {"claude-code"}
+    if "claude-code" in selected_integrations:
+        install_claude_skills(repo_path, force=force)
     return created, str(project_path)
 
 

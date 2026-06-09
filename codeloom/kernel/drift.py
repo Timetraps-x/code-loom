@@ -17,9 +17,9 @@ def detect_plan_or_task_drift(
     latest_tasks_revision: dict[str, object] | None,
 ) -> DriftDecision | None:
     if spec_hash and latest_plan_revision and latest_plan_revision.get("based_on_spec_hash") != spec_hash:
-        return DriftDecision("noop", "plan.md is based on an older spec.md", "/loom:plan")
+        return DriftDecision("noop", "plan.md is based on an older spec.md", "/loom-plan")
     if plan_hash and latest_tasks_revision and latest_tasks_revision.get("based_on_plan_hash") != plan_hash:
-        return DriftDecision("noop", "tasks.md is based on an older plan.md", "/loom:tasks")
+        return DriftDecision("noop", "tasks.md is based on an older plan.md", "/loom-tasks")
     if spec_hash and latest_tasks_revision and latest_tasks_revision.get("based_on_spec_hash") != spec_hash:
-        return DriftDecision("noop", "tasks.md is based on an older spec.md", "/loom:tasks")
+        return DriftDecision("noop", "tasks.md is based on an older spec.md", "/loom-tasks")
     return None

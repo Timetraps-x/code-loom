@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 COMMANDS = {
@@ -27,18 +26,25 @@ COMMANDS = {
 }
 
 
-def install_claude_plugin(repo_path: Path, force: bool = False) -> list[str]:
-    root = repo_path.resolve() / ".claude" / "skills" / "loom"
-    plugin_dir = root / ".claude-plugin"
-    skills_dir = root / "skills"
+def install_claude_skills(repo_path: Path, force: bool = False) -> list[str]:
+    skills_dir = repo_path.resolve() / ".claude" / "skills"
     written: list[str] = []
 
-    plugin_json = plugin_dir / "plugin.json"
-    written.extend(_write(plugin_json, json.dumps({"name": "loom"}, indent=2) + "\n", force))
-
     for command, metadata in COMMANDS.items():
-        skill_path = skills_dir / command / "SKILL.md"
-        written.extend(_write(skill_path, _skill_content(command, metadata["description"], metadata["argument_hint"]), force))
+        skill_name = f"loom-{command}"
+        skill_path = skills_dir / skill_name / "SKILL.md"
+        written.extend(
+            _write(
+                skill_path,
+                _skill_content(
+                    skill_name,
+                    command,
+                    metadata["description"],
+                    metadata["argument_hint"],
+                ),
+                force,
+            )
+        )
 
     return written
 
@@ -51,13 +57,15 @@ def _write(path: Path, content: str, force: bool) -> list[str]:
     return [path.as_posix()]
 
 
-def _skill_content(command: str, description: str, argument_hint: str) -> str:
+def _skill_content(skill_name: str, command: str, description: str, argument_hint: str) -> str:
     task_argument_rule = "- For the `do` stage, convert a bare task id like `T2` to `--arg task_id=T2`." if command == "do" else ""
     content_rule = _content_rule(command)
     return f"""---
+name: {skill_name}
 description: {description}
 argument-hint: {argument_hint}
-disable-model-invocation: true
+user-invocable: true
+disable-model-invocation: false
 ---
 
 Run the CodeLoom `{command}` stage for the current project and current git branch.

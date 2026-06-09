@@ -23,18 +23,18 @@ class ContractRevisionResolver:
         if has_open_blocking_finding:
             return ResolverDecision("blocked", "open blocking finding exists", None)
         if task is None:
-            return ResolverDecision("superseded", "task does not exist", "/loom:tasks")
+            return ResolverDecision("superseded", "task does not exist", "/loom-tasks")
         if latest_attempt and latest_attempt.get("task_fingerprint") != task.fingerprint:
-            return ResolverDecision("reattempt", "task definition changed since latest attempt", "/loom:do")
+            return ResolverDecision("reattempt", "task definition changed since latest attempt", "/loom-do")
         if latest_snapshot and latest_snapshot.get("task_fingerprint") != task.fingerprint:
-            return ResolverDecision("reattempt", "task definition changed", "/loom:do")
+            return ResolverDecision("reattempt", "task definition changed", "/loom-do")
         if not latest_attempt:
-            return ResolverDecision("execute", "no previous attempt", "/loom:do")
+            return ResolverDecision("execute", "no previous attempt", "/loom-do")
         status = latest_attempt.get("status")
         if status == "running":
-            return ResolverDecision("continue", "latest attempt is still running", "/loom:do")
+            return ResolverDecision("continue", "latest attempt is still running", "/loom-do")
         if status == "failed":
-            return ResolverDecision("retry", "latest attempt failed", "/loom:do")
+            return ResolverDecision("retry", "latest attempt failed", "/loom-do")
         if status == "verified":
-            return ResolverDecision("verified", "task already verified", "/loom:ship")
-        return ResolverDecision("execute", f"latest attempt status is {status}", "/loom:do")
+            return ResolverDecision("verified", "task already verified", "/loom-ship")
+        return ResolverDecision("execute", f"latest attempt status is {status}", "/loom-do")
