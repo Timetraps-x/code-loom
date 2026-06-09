@@ -22,6 +22,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--cwd", default=".")
     init_parser.add_argument("--force", action="store_true")
+    init_parser.add_argument("--claude-code", action="store_true", help="install Claude Code project skills")
+    init_parser.add_argument("--codex", action="store_true", help="select Codex integration when supported")
+    init_parser.add_argument("--opencode", action="store_true", help="select OpenCode integration when supported")
     _add_output_flags(init_parser)
 
     subparsers.add_parser("kernel")
@@ -44,12 +47,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.subcommand == "init":
-        created, path = init_project(Path(args.cwd), force=args.force)
+        integrations = _parse_init_integrations(args)
+        created, path = init_project(Path(args.cwd), force=args.force, integrations=integrations)
         payload = {
             "status": "ok",
             "message": "project initialized" if created else "project already initialized",
             "created": created,
             "project_path": path,
+            "integrations": sorted(integrations),
         }
         emit_data(payload, args.json_output, render_init)
         return 0
@@ -98,6 +103,15 @@ def _add_output_flags(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(json_output=False)
 
 
+def _parse_init_integrations(args: argparse.Namespace) -> set[str]:
+    integrations = set()
+    if args.claude_code:
+        integrations.add("claude-code")
+    if args.codex:
+        integrations.add("codex")
+    if args.opencode:
+        integrations.add("opencode")
+    return integrations or {"claude-code"}
 def _parse_args(values: list[str]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     for value in values:

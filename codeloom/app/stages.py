@@ -34,13 +34,29 @@ class NextRecommendation:
     command: str | None
     task_id: str | None = None
 
+def _loom_command(command: str) -> str:
+    return f"/loom-{command}"
+
+
+def _normalize_command(command: str) -> str:
+    if command.startswith("/loom-"):
+        return command.removeprefix("/loom-")
+    return command.removeprefix("/loom:")
+
+
+def _normalize_recommendation(command: str) -> str:
+    if command.startswith("/loom:"):
+        return command.replace("/loom:", "/loom-", 1)
+    return command
+
+
 class StageRunner:
     def __init__(self) -> None:
         self.verifier = ShellVerifier()
         self.resolver = ContractRevisionResolver()
 
     def run(self, request: KernelRequest) -> KernelResponse:
-        command = request.command.removeprefix("/loom:")
+        command = _normalize_command(request.command)
         context = self._context(request)
         if command == "spec":
             return self._run_spec(context)
@@ -185,12 +201,12 @@ class StageRunner:
 
     def _derive_recommendation(self, context: StageContext) -> NextRecommendation:
         if context.artifacts.read("spec") is None:
-            return NextRecommendation("/loom:spec")
+            return NextRecommendation(_loom_command("spec"))
         if context.artifacts.read("plan") is None:
-            return NextRecommendation("/loom:plan")
+            return NextRecommendation(_loom_command("plan"))
         tasks_content = context.artifacts.read("tasks")
         if tasks_content is None:
-            return NextRecommendation("/loom:tasks")
+            return NextRecommendation(_loom_command("tasks"))
 
         session_id = int(context.session["id"])
         spec_hash = context.artifacts.hash_existing("spec")
@@ -206,10 +222,10 @@ class StageRunner:
 
         tasks_hash = context.artifacts.hash_existing("tasks")
         if tasks_hash is None:
-            return NextRecommendation("/loom:tasks")
+            return NextRecommendation(_loom_command("tasks"))
         tasks = parse_tasks(tasks_content)
         if not tasks:
-            return NextRecommendation("/loom:tasks")
+            return NextRecommendation(_loom_command("tasks"))
 
         self._record_task_snapshots(context, tasks_content, tasks_hash)
         self._supersede_stale_task_state(context, tasks)
@@ -220,10 +236,10 @@ class StageRunner:
         task = self._select_recommended_task(context, tasks)
         if task is not None:
             return NextRecommendation(self._recommended_do(task.task_id), task.task_id)
-        return NextRecommendation("/loom:ship")
+        return NextRecommendation(_loom_command("ship"))
 
     def _recommended_do(self, task_id: str) -> str:
-        return f"/loom:do {task_id}"
+        return f"{_loom_command('do')} {task_id}"
 
     def _open_execution_blocking_findings(self, context: StageContext) -> list[dict[str, Any]]:
         session_id = int(context.session["id"])
@@ -242,8 +258,8 @@ class StageRunner:
             suggested_next = finding.get("suggested_next")
             if not suggested_next:
                 continue
-            command = str(suggested_next)
-            if command == "/loom:do":
+            command = _normalize_recommendation(str(suggested_next))
+            if command == _loom_command("do"):
                 attempt_id = finding.get("attempt_id")
                 if attempt_id is None:
                     continue
@@ -252,9 +268,9 @@ class StageRunner:
                     continue
                 task_id = str(attempt["task_id"])
                 return NextRecommendation(self._recommended_do(task_id), task_id)
-            if command in {"/loom:spec", "/loom:plan", "/loom:tasks", "/loom:ship"}:
+            if command in {_loom_command("spec"), _loom_command("plan"), _loom_command("tasks"), _loom_command("ship")}:
                 return NextRecommendation(command)
-            if command.startswith("/loom:do "):
+            if command.startswith(f"{_loom_command('do')} "):
                 task_id = command.split(maxsplit=1)[1]
                 return NextRecommendation(command, task_id)
         return NextRecommendation(None)
@@ -306,20 +322,20 @@ class StageRunner:
             session_id,
             active_stage="spec",
             active_spec_hash=content_hash,
-            recommended_next="/loom:plan",
+            recommended_next=_loom_command("plan"),
             recommended_task_id=None,
         )
         return KernelResponse(
             status="ok",
             message="spec.md generated",
-            recommended_next="/loom:plan",
+            recommended_next=_loom_command("plan"),
             artifact_paths=[context.artifacts.relative(path)],
         )
 
     def _run_plan(self, context: StageContext) -> KernelResponse:
         spec = context.artifacts.read("spec")
         if spec is None:
-            return KernelResponse(status="failed", message="spec.md is required", recommended_next="/loom:spec", errors=["missing_spec"])
+            return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         spec_hash = context.artifacts.hash_existing("spec")
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
         content, error = self._candidate_content(context, lambda: create_llm_client().draft_plan(spec, constraints))
@@ -334,13 +350,13 @@ class StageRunner:
             active_stage="plan",
             active_spec_hash=spec_hash,
             active_plan_hash=content_hash,
-            recommended_next="/loom:tasks",
+            recommended_next=_loom_command("tasks"),
             recommended_task_id=None,
         )
         return KernelResponse(
             status="ok",
             message="plan.md generated",
-            recommended_next="/loom:tasks",
+            recommended_next=_loom_command("tasks"),
             artifact_paths=[context.artifacts.relative(path)],
         )
 
@@ -348,9 +364,9 @@ class StageRunner:
         spec = context.artifacts.read("spec")
         plan = context.artifacts.read("plan")
         if spec is None:
-            return KernelResponse(status="failed", message="spec.md is required", recommended_next="/loom:spec", errors=["missing_spec"])
+            return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         if plan is None:
-            return KernelResponse(status="failed", message="plan.md is required", recommended_next="/loom:plan", errors=["missing_plan"])
+            return KernelResponse(status="failed", message="plan.md is required", recommended_next=_loom_command("plan"), errors=["missing_plan"])
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
@@ -363,7 +379,7 @@ class StageRunner:
             return KernelResponse(
                 status="failed",
                 message="tasks.md candidate contains no parseable tasks",
-                recommended_next="/loom:tasks",
+                recommended_next=_loom_command("tasks"),
                 errors=["invalid_tasks_format"],
             )
         path, tasks_hash = context.artifacts.write("tasks", content)
@@ -378,7 +394,7 @@ class StageRunner:
         )
         self._record_task_snapshots(context, content, tasks_hash)
         recommended_task_id = tasks[0].task_id if tasks else None
-        recommended_next = self._recommended_do(recommended_task_id) if recommended_task_id else "/loom:do"
+        recommended_next = self._recommended_do(recommended_task_id) if recommended_task_id else _loom_command("do")
         context.store.update_branch_session(
             session_id,
             active_stage="tasks",
@@ -400,13 +416,13 @@ class StageRunner:
         session_id = int(context.session["id"])
         tasks_content = context.artifacts.read("tasks")
         if tasks_content is None:
-            return KernelResponse(status="failed", message="tasks.md is required", recommended_next="/loom:tasks", errors=["missing_tasks"])
+            return KernelResponse(status="failed", message="tasks.md is required", recommended_next=_loom_command("tasks"), errors=["missing_tasks"])
 
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         tasks_hash = context.artifacts.hash_existing("tasks")
         if tasks_hash is None:
-            return KernelResponse(status="failed", message="tasks.md is empty", recommended_next="/loom:tasks", errors=["missing_tasks_hash"])
+            return KernelResponse(status="failed", message="tasks.md is empty", recommended_next=_loom_command("tasks"), errors=["missing_tasks_hash"])
 
         drift = self._drift_response(context, spec_hash, plan_hash)
         if drift is not None:
@@ -414,7 +430,7 @@ class StageRunner:
 
         tasks = parse_tasks(tasks_content)
         if not tasks:
-            return KernelResponse(status="failed", message="no tasks found", recommended_next="/loom:tasks", errors=["no_tasks"])
+            return KernelResponse(status="failed", message="no tasks found", recommended_next=_loom_command("tasks"), errors=["no_tasks"])
         self._record_task_snapshots(context, tasks_content, tasks_hash)
         self._supersede_stale_task_state(context, tasks)
 
@@ -433,8 +449,8 @@ class StageRunner:
         if task is None:
             requested = context.request.args.get("task_id")
             if requested:
-                return KernelResponse(status="failed", message=f"task not found: {requested}", recommended_next="/loom:tasks", errors=["task_not_found"])
-            return KernelResponse(status="ok", message="all tasks already verified", recommended_next="/loom:ship")
+                return KernelResponse(status="failed", message=f"task not found: {requested}", recommended_next=_loom_command("tasks"), errors=["task_not_found"])
+            return KernelResponse(status="ok", message="all tasks already verified", recommended_next=_loom_command("ship"))
 
         latest_snapshot = context.store.latest_task_snapshot(session_id, task.task_id)
         latest_attempt = context.store.latest_attempt(session_id, task.task_id)
@@ -487,14 +503,14 @@ class StageRunner:
                 "verification_failure",
                 "blocking",
                 f"verification failed for {task.task_id}",
-                "/loom:do",
+                _loom_command("do"),
             )
         if status == "failed":
             recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
         else:
             next_task = self._select_recommended_task(context, tasks)
             if next_task is None:
-                recommendation = NextRecommendation("/loom:ship")
+                recommendation = NextRecommendation(_loom_command("ship"))
             else:
                 recommendation = NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
         context.store.update_branch_session(

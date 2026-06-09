@@ -6,20 +6,20 @@ from tests.helpers import init_repo, run_stage
 def test_mock_stage_flow_reaches_ship(tmp_path):
     repo = init_repo(tmp_path)
 
-    assert run_stage(repo, "spec").recommended_next == "/loom:plan"
-    assert run_stage(repo, "plan").recommended_next == "/loom:tasks"
+    assert run_stage(repo, "spec").recommended_next == "/loom-plan"
+    assert run_stage(repo, "plan").recommended_next == "/loom-tasks"
     tasks_response = run_stage(repo, "tasks")
-    assert tasks_response.recommended_next == "/loom:do T1"
+    assert tasks_response.recommended_next == "/loom-do T1"
     assert tasks_response.recommended_task_id == "T1"
 
     first = run_stage(repo, "do", task_id="T1")
     assert first.status == "ok"
-    assert first.recommended_next == "/loom:do T2"
+    assert first.recommended_next == "/loom-do T2"
     assert first.recommended_task_id == "T2"
 
     second = run_stage(repo, "do", task_id="T2")
     assert second.status == "ok"
-    assert second.recommended_next == "/loom:ship"
+    assert second.recommended_next == "/loom-ship"
 
     ship = run_stage(repo, "ship")
     assert ship.status == "ok"

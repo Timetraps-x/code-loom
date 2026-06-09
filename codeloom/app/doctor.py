@@ -70,8 +70,8 @@ def _exists_message(path: Path) -> str:
 
 
 def _missing_skill_files(repo_path: Path) -> list[Path]:
-    skills_dir = repo_path / ".claude" / "skills" / "loom" / "skills"
-    return [skills_dir / command / "SKILL.md" for command in COMMANDS if not (skills_dir / command / "SKILL.md").exists()]
+    skills_dir = repo_path / ".claude" / "skills"
+    return [skills_dir / f"loom-{command}" / "SKILL.md" for command in COMMANDS if not (skills_dir / f"loom-{command}" / "SKILL.md").exists()]
 
 
 def _overall_status(checks: list[dict[str, str]]) -> str:

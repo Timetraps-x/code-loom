@@ -8,18 +8,18 @@ Phase 1 已跑通最小闭环：
 
 ```text
 loom init
-/loom:spec
-/loom:plan
-/loom:tasks
-/loom:do
-/loom:ship
+/loom-spec
+/loom-plan
+/loom-tasks
+/loom-do
+/loom-ship
 ```
 
 核心产物：
 
 ```text
 project.yml                 # 项目配置
-.claude/skills/loom/        # Claude Code /loom:* skills
+.claude/skills/loom-*/      # Claude Code /loom-* project skills
 specs/<branch_slug>/        # spec.md / plan.md / tasks.md / ship.md
 .loom/loom.db               # SQLite runtime memory
 .loom/runs/<branch_slug>/   # attempt evidence
@@ -61,7 +61,7 @@ uv tool install --editable <repo-path>
 初始化目标项目：
 
 ```powershell
-loom init
+loom init --claude-code
 ```
 
 CLI：
@@ -77,13 +77,12 @@ loom doctor
 ```
 
 Claude Code slash commands：
-
 ```text
-/loom:spec
-/loom:plan
-/loom:tasks
-/loom:do T1
-/loom:ship
+/loom-spec
+/loom-plan
+/loom-tasks
+/loom-do T1
+/loom-ship
 ```
 
 默认输出为 human 摘要；需要机器输出时加 `--json`。

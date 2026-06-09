@@ -53,13 +53,15 @@ def render_kernel_response(response: KernelResponse) -> str:
 
 
 def render_init(data: dict[str, Any]) -> str:
-    return "\n".join(
-        [
-            f"Status: {data['status']}",
-            f"Message: {data['message']}",
-            f"Project path: {data['project_path']}",
-        ]
-    )
+    lines = [
+        f"Status: {data['status']}",
+        f"Message: {data['message']}",
+        f"Project path: {data['project_path']}",
+    ]
+    integrations = data.get("integrations") or []
+    if integrations:
+        lines.append(f"Integrations: {', '.join(integrations)}")
+    return "\n".join(lines)
 
 
 def render_status(data: dict[str, Any]) -> str:
