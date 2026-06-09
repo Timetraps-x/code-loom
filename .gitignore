@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+node_modules/
+dist/
+.loom/
+.idea/
+spec-kit-src/
+docs/research/
+specs/
