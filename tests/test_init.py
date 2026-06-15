@@ -37,7 +37,8 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
 
     assert created is True
     assert project_path.endswith("project.yml")
-    assert tmp_path.joinpath("project.yml").exists()
+    assert tmp_path.joinpath(".loom", "project.yml").exists()
+    assert not tmp_path.joinpath("project.yml").exists()
     assert tmp_path.joinpath(".loom", "loom.db").exists()
     assert tmp_path.joinpath(".loom", "runs").exists()
     templates_dir = tmp_path.joinpath(".loom", "templates")

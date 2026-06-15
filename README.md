@@ -27,7 +27,7 @@ ship   release.md 交付结论
 初始化后，一个项目会包含：
 
 ```text
-project.yml                 # 项目配置
+.loom/project.yml           # 项目配置
 .claude/skills/loom-*/      # Claude Code /loom-* project skills
 .claude/agents/*.md         # CodeLoom stage / do agents
 .loom/templates/            # 项目可定制模板
@@ -38,7 +38,7 @@ specs/<branch_slug>/        # spec.md / plan.md / tasks.md / release.md
 
 `.loom/templates/` 是项目模板区，可以按项目直接修改或替换。再次执行 `loom init` 不覆盖已有模板，除非传 `--force`。
 
-`.loom/loom.db` 和 `.loom/runs/` 是本地运行时状态；`specs/<branch_slug>/` 是交付类 Markdown artifact。
+`.loom/project.yml`、`.loom/loom.db` 和 `.loom/runs/` 是本地项目配置与运行时状态；`specs/<branch_slug>/` 是交付类 Markdown artifact。
 
 ## 安装
 

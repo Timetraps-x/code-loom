@@ -19,7 +19,7 @@ def run_stage(repo_path: Path, command: str, branch: str = BRANCH, **args: str):
 
 
 def write_project_config(repo_path: Path, test_command: str = "", runtime: str = "mock") -> None:
-    repo_path.joinpath("project.yml").write_text(
+    repo_path.joinpath(".loom", "project.yml").write_text(
         f"""project:
   name: codeloom-test
 

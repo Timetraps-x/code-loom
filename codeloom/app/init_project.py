@@ -73,13 +73,15 @@ class ProjectConfig:
 
 def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None) -> tuple[bool, str]:
     repo_path = cwd.resolve()
-    project_path = repo_path / "project.yml"
+    loom_dir = repo_path / ".loom"
+    loom_dir.mkdir(parents=True, exist_ok=True)
+    project_path = loom_dir / "project.yml"
     if project_path.exists() and not force:
         created = False
     else:
         project_path.write_text(DEFAULT_PROJECT_YML, encoding="utf-8")
         created = True
-    (repo_path / ".loom" / "runs").mkdir(parents=True, exist_ok=True)
+    (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
     _initialize_templates(repo_path, force=force)
     SQLiteStore(repo_path).initialize()
     selected_integrations = integrations or {"claude-code"}
@@ -114,7 +116,7 @@ def _initialize_claude_agents(repo_path: Path, force: bool = False) -> None:
 
 
 def load_project_config(cwd: Path) -> ProjectConfig:
-    project_path = cwd.resolve() / "project.yml"
+    project_path = cwd.resolve() / ".loom" / "project.yml"
     if not project_path.exists():
         return ProjectConfig()
     artifact_root = "specs"
