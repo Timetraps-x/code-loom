@@ -9,11 +9,15 @@ from codeloom.app.claude_plugin import install_claude_skills
 from codeloom.persistence.sqlite import SQLiteStore
 
 
-DEFAULT_PROJECT_YML = """project:
+def _default_project_yml(language: str = "en") -> str:
+    return f"""project:
   name: codeloom-demo
 
 artifacts:
   root: specs
+
+specs:
+  language: {language}
 
 runtime:
   default: mock
@@ -67,11 +71,11 @@ DEFAULT_AGENT_NAMES = (
 @dataclass(frozen=True)
 class ProjectConfig:
     artifact_root: str = "specs"
+    spec_language: str = "en"
     default_runtime: str = "mock"
     commands: dict[str, str] = field(default_factory=lambda: {"test": "", "lint": "", "typecheck": "", "build": ""})
 
-
-def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None) -> tuple[bool, str]:
+def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None, language: str = "en") -> tuple[bool, str]:
     repo_path = cwd.resolve()
     loom_dir = repo_path / ".loom"
     loom_dir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +83,7 @@ def init_project(cwd: Path, force: bool = False, integrations: set[str] | None =
     if project_path.exists() and not force:
         created = False
     else:
-        project_path.write_text(DEFAULT_PROJECT_YML, encoding="utf-8")
+        project_path.write_text(_default_project_yml(language), encoding="utf-8")
         created = True
     (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
     _initialize_templates(repo_path, force=force)
@@ -120,6 +124,7 @@ def load_project_config(cwd: Path) -> ProjectConfig:
     if not project_path.exists():
         return ProjectConfig()
     artifact_root = "specs"
+    spec_language = "en"
     default_runtime = "mock"
     commands = {"test": "", "lint": "", "typecheck": "", "build": ""}
     section: str | None = None
@@ -133,13 +138,15 @@ def load_project_config(cwd: Path) -> ProjectConfig:
             continue
         if section == "artifacts" and stripped.startswith("root:"):
             artifact_root = _value(stripped)
+        elif section == "specs" and stripped.startswith("language:"):
+            spec_language = _value(stripped) or "en"
         elif section == "runtime" and stripped.startswith("default:"):
             default_runtime = _value(stripped)
         elif section == "commands" and ":" in stripped:
             key, value = stripped.split(":", 1)
             if key in commands:
                 commands[key] = _clean(value)
-    return ProjectConfig(artifact_root=artifact_root, default_runtime=default_runtime, commands=commands)
+    return ProjectConfig(artifact_root=artifact_root, spec_language=spec_language, default_runtime=default_runtime, commands=commands)
 
 
 def _value(line: str) -> str:

@@ -1,157 +1,157 @@
-# <需求名>技术方案
+# <Requirement Name> Technical Plan
 
 based_on_spec_hash: `<spec-hash>`
 
-## 1. 背景
+## 1. Background
 
-说明本方案从规格到系统设计事实的桥接范围：覆盖哪些模块、接口、页面、数据、权限、运行路径、验证和回滚策略。
+Describe how this plan bridges the spec into system design facts: modules, interfaces, pages, data, permissions, runtime paths, verification, and rollback strategy.
 
-## 2. 目标与非目标
+## 2. Goals and Non-Goals
 
-### 2.1 目标
+### 2.1 Goals
 
-- <目标 1>
+- <Goal 1>
 
-### 2.2 非目标
+### 2.2 Non-Goals
 
-- <明确不做的范围>
+- <Explicitly out-of-scope work>
 
-## 3. 当前状态
+## 3. Current State
 
-按当前真实代码和数据路径说明现状。优先列出关键文件、入口、接口、表、权限、配置、外部依赖和已知问题。
+Describe the real current code and data paths. Prioritize critical files, entry points, interfaces, tables, permissions, configuration, external dependencies, and known issues.
 
-### 3.1 <当前状态分组>
+### 3.1 <Current State Group>
 
-- `<path/or/symbol>`: <当前行为>
+- `<path/or/symbol>`: <Current behavior>
 
-## 4. 目标设计
+## 4. Target Design
 
-### 4.1 总体组件影响
+### 4.1 Component Impact
 
-当改动跨越两个以上模块、页面、Controller、Service、表、外部系统或运行阶段时，必须提供总体组件图。小范围单点改动可写 `N/A，原因：...`。
+When the change crosses more than two modules, pages, controllers, services, tables, external systems, or runtime stages, provide a component diagram. For a narrow single-point change, write `N/A because ...`.
 
 ```plantuml
 @startuml
 skinparam componentStyle rectangle
-actor "用户/调用方" as User
-component "入口/页面/API" as Entry
-component "业务逻辑" as Service
-database "数据/状态" as DB
+actor "User/Caller" as User
+component "Entry/Page/API" as Entry
+component "Business Logic" as Service
+database "Data/State" as DB
 User --> Entry
 Entry --> Service
 Service --> DB
 @enduml
 ```
 
-### 4.2 <关键目标设计点>
+### 4.2 <Key Target Design Point>
 
-说明目标入口、目标权限、目标数据流、目标校验、目标边界和不变项。
+Describe target entry points, permissions, data flow, validation, boundaries, and invariants.
 
-## 5. 交互与流程设计
+## 5. Interaction and Flow Design
 
-当存在多步调用、页面交互、服务协作、异步流程、权限判断链路或副作用时，必须提供流程图或时序图。
+When there are multi-step calls, page interactions, service collaboration, async flows, permission chains, or side effects, provide a flow or sequence diagram.
 
 ```plantuml
 @startuml
-actor 用户 as U
-participant "入口" as Entry
-participant "服务" as S
-database "数据" as DB
-U -> Entry : <操作>
-Entry -> S : <请求>
-S -> DB : <读写>
-DB --> S : <结果>
-S --> Entry : <响应>
-Entry --> U : <结果>
+actor User as U
+participant "Entry" as Entry
+participant "Service" as S
+database "Data" as DB
+U -> Entry : <operation>
+Entry -> S : <request>
+S -> DB : <read/write>
+DB --> S : <result>
+S --> Entry : <response>
+Entry --> U : <result>
 @enduml
 ```
 
-## 6. 数据、状态与一致性设计
+## 6. Data, State, and Consistency Design
 
-说明本次涉及的数据字段、状态、迁移、关联关系、不变式和一致性要求。
+Describe the fields, states, migrations, relationships, invariants, and consistency requirements involved in this change.
 
-当涉及迁移、权限切换、发布回滚、生命周期变化或状态机时，必须提供状态图。
+When there is migration, permission switching, release/rollback transition, lifecycle change, or a state machine, provide a state diagram.
 
 ```plantuml
 @startuml
-[*] --> Current : 当前状态
-Current --> Target : 执行变更
-Target --> Verified : 验证通过
-Target --> Current : 回滚
+[*] --> Current : Current state
+Current --> Target : Apply change
+Target --> Verified : Verification passed
+Target --> Current : Rollback
 Verified --> [*]
 @enduml
 ```
 
-## 7. API / 页面 / 接口契约设计
+## 7. API / Page / Interface Contract Design
 
-当涉及接口、页面、权限、配置、CLI、文件格式或外部契约时，使用当前/目标对照表。
+When this touches an API, page, permission, configuration, CLI, file format, or external contract, use a current/target comparison table.
 
-| 能力 | 当前 | 目标 |
+| Capability | Current | Target |
 |---|---|---|
-| <能力> | <当前行为> | <目标行为> |
+| <Capability> | <Current behavior> | <Target behavior> |
 
-## 8. 并发、事务与一致性设计
+## 8. Concurrency, Transactions, and Consistency Design
 
-说明并发、事务、幂等、重复执行、失败恢复和部分成功语义。若不涉及，写 `N/A，原因：...`。
+Describe concurrency, transactions, idempotency, repeat execution, failure recovery, and partial-success semantics. If not relevant, write `N/A because ...`.
 
-| 风险 | 控制措施 | 验证 |
+| Risk | Control | Verification |
 |---|---|---|
-| <一致性风险> | <控制> | <验证方式> |
+| <Consistency risk> | <Control> | <Verification method> |
 
-## 9. 风险控制
+## 9. Risk Controls
 
-| 风险 | 控制措施 | 验证 |
+| Risk | Control | Verification |
 |---|---|---|
-| <风险> | <控制措施> | <验证证据> |
+| <Risk> | <Control> | <Verification evidence> |
 
-## 10. 发布与回滚
+## 10. Release and Rollback
 
-说明代码、配置、数据、权限或迁移的发布顺序和回滚顺序。若不涉及共享环境或数据变更，写 `N/A，原因：...`。
+Describe release order and rollback order for code, configuration, data, permissions, or migrations. If shared environments or data changes are not involved, write `N/A because ...`.
 
-### 10.1 发布顺序
+### 10.1 Release Order
 
-1. <步骤>
+1. <Step>
 
-### 10.2 回滚顺序
+### 10.2 Rollback Order
 
-1. <步骤>
+1. <Step>
 
-## 11. 验证矩阵
+## 11. Validation Matrix
 
-| 验收 | 验证方式 | 证据 |
+| Acceptance | Verification Method | Evidence |
 |---|---|---|
-| AC-1 | <验证方式> | <证据类型> |
+| AC-1 | <Verification method> | <Evidence type> |
 
-建议最小自动验证：
+Recommended minimum automated verification:
 
-- <命令或 N/A>
+- <Command or N/A>
 
-建议最小手工验证：
+Recommended minimum manual verification:
 
-- <页面、接口、数据或流程检查>
+- <Page, API, data, or flow check>
 
-## 12. 关键决策
+## 12. Key Decisions
 
-- <已经确定且会影响设计、验证或回滚的决策>
+- <Decision already made that affects design, verification, or rollback>
 
-## 13. 替代方案与取舍
+## 13. Alternatives and Tradeoffs
 
-### 13.1 <替代方案>
+### 13.1 <Alternative>
 
-放弃原因：<原因>
+Rejected because: <Reason>
 
-## 14. 计划缺口与阻塞项
+## 14. Plan Gaps and Blockers
 
-### 14.1 已解决的开放问题
+### 14.1 Resolved Open Questions
 
-- <OQ 或 None>
+- <OQ or None>
 
-### 14.2 阻塞项
+### 14.2 Blockers
 
-- None / <阻止继续后续阶段的问题>
+- None / <Issue that blocks later stages>
 
-### 14.3 注意事项
+### 14.3 Notes
 
-- <不阻塞但影响后续设计理解、验证或交付判断的事项>
+- <Non-blocking note that affects design understanding, verification, or delivery judgment>
 
-注意：这里不写任务拆分依据，不写 builder 指令，也不得描述任务拆分策略、执行顺序或 do-stage 边界。
+Do not write task slicing rationale, builder instructions, task execution strategy, execution order, or do-stage boundaries in this plan.
