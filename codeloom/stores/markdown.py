@@ -9,7 +9,7 @@ class MarkdownArtifactStore:
         "spec": "spec.md",
         "plan": "plan.md",
         "tasks": "tasks.md",
-        "ship": "ship.md",
+        "ship": "release.md",
     }
 
     def __init__(self, repo_path: Path, artifact_root: str, branch_slug: str) -> None:

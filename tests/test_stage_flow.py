@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from codeloom.persistence.sqlite import SQLiteStore
 from tests.helpers import init_repo, run_stage
 
 
@@ -21,7 +22,13 @@ def test_mock_stage_flow_reaches_ship(tmp_path):
     assert second.status == "ok"
     assert second.recommended_next == "/loom-ship"
 
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    attempts = store.attempts(int(session["id"]))
+    assert [(attempt["task_id"], attempt["status"]) for attempt in attempts] == [("T1", "implemented"), ("T2", "verified")]
+
     ship = run_stage(repo, "ship")
     assert ship.status == "ok"
     assert ship.recommended_next is None
-    assert repo.joinpath("specs", "master", "ship.md").exists()
+    assert repo.joinpath("specs", "master", "release.md").exists()

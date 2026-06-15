@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codeloom"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI coding workflow harness kernel"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,10 @@ loom = "codeloom.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["codeloom*"]
+
+[tool.setuptools.package-data]
+"codeloom.templates" = ["*.md"]
+"codeloom.agents" = ["*.md"]
 
 [dependency-groups]
 dev = [
