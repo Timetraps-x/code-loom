@@ -18,13 +18,16 @@ def run_stage(repo_path: Path, command: str, branch: str = BRANCH, **args: str):
     return StageRunner().run(KernelRequest(repo_path, branch, command, args))
 
 
-def write_project_config(repo_path: Path, test_command: str = "", runtime: str = "mock") -> None:
+def write_project_config(repo_path: Path, test_command: str = "", runtime: str = "mock", language: str = "en") -> None:
     repo_path.joinpath(".loom", "project.yml").write_text(
         f"""project:
   name: codeloom-test
 
 artifacts:
   root: specs
+
+specs:
+  language: {language}
 
 runtime:
   default: {runtime}

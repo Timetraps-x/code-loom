@@ -129,6 +129,20 @@ def test_loom_tasks_skill_prompt_eval_assignment_cases():
     for case in cases:
         _assert_guardrails(case)
 
+
+def test_stage_content_rule_uses_project_artifact_language():
+    prompt = _content_rule("plan")
+
+    for expected in (
+        ".loom/project.yml",
+        "specs.language",
+        "default to English (`en`)",
+        "The template controls structure",
+        "controls the artifact's prose language",
+    ):
+        assert expected in prompt
+
+
 def test_builder_prompt_eval_good_cases():
     prompt = _agent_prompt("builder.md")
 

@@ -1,59 +1,59 @@
-# <需求名>规格
+# <Requirement Name> Spec
 
-## 1. 背景
+## 1. Background
 
-说明用户请求、当前问题、触发这次变更的上下文。
+Describe the user request, the current problem, and the context that triggered this change.
 
-## 2. 已知事实、推断与待确认决策
+## 2. Known Facts, Inferences, and Decisions to Confirm
 
-### 2.1 已知事实
+### 2.1 Known Facts
 
-- <来自用户输入、现有文档或当前系统的事实；无则写 None>
+- <Facts from user input, existing documentation, or the current system; write None if empty>
 
-### 2.2 推断
+### 2.2 Inferences
 
-- <从上下文推断但不改变需求语义的内容；无则写 None>
+- <Context-derived assumptions that do not change requirement semantics; write None if empty>
 
-### 2.3 需要确认的 owner 决策
+### 2.3 Owner Decisions to Confirm
 
-- <会影响需求语义、验收标准、公开契约或风险接受的问题；无则写 None>
+- <Questions that affect requirement semantics, acceptance criteria, public contracts, or risk acceptance; write None if empty>
 
-## 3. 目标与非目标
+## 3. Goals and Non-Goals
 
-### 3.1 目标
+### 3.1 Goals
 
-- <目标 1>
+- <Goal 1>
 
-### 3.2 非目标
+### 3.2 Non-Goals
 
-- <明确不做的范围>
+- <Explicitly out-of-scope work>
 
-## 4. 用户 / 参与方
+## 4. Users / Actors
 
-- <用户或系统参与方>
+- <User or system actor>
 
-## 5. 需求
+## 5. Requirements
 
-| ID | 需求 | 优先级 |
+| ID | Requirement | Priority |
 |---|---|---|
-| FR-1 | <功能需求> | Must |
+| FR-1 | <Functional requirement> | Must |
 
-## 6. 验收标准
+## 6. Acceptance Criteria
 
-每条 AC 必须描述 observable / verifiable outcome；不得只写“支持、优化、改进、完成某能力”而没有具体证据。
+Every AC must describe an observable and verifiable outcome. Do not write only "support", "optimize", "improve", or "complete a capability" without concrete evidence.
 
-| ID | 验收标准 | 验证提示 |
+| ID | Acceptance Criteria | Verification Hint |
 |---|---|---|
-| AC-1 | <可验证结果> | <页面/接口/命令/数据检查> |
+| AC-1 | <Verifiable result> | <Page/API/command/data check> |
 
-## 7. 约束与规则
+## 7. Constraints and Rules
 
-- <业务规则、权限规则、数据规则或技术约束>
+- <Business rule, permission rule, data rule, or technical constraint>
 
-## 8. 风险与硬门槛
+## 8. Risks and Hard Gates
 
-- <会影响方案、验证或交付的风险>
+- <Risk that affects design, verification, or delivery>
 
-## 9. 开放问题
+## 9. Open Questions
 
-- OQ-1: <需要澄清的问题；无则写 None>
+- OQ-1: <Question that needs clarification; write None if empty>

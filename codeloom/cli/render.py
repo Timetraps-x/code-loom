@@ -61,6 +61,8 @@ def render_init(data: dict[str, Any]) -> str:
     integrations = data.get("integrations") or []
     if integrations:
         lines.append(f"Integrations: {', '.join(integrations)}")
+    if data.get("language"):
+        lines.append(f"Specs language: {data['language']}")
     return "\n".join(lines)
 
 

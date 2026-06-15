@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib import resources
 
-from codeloom.app.init_project import init_project
+from codeloom.app.init_project import init_project, load_project_config
 
 AGENT_NAMES = (
     "spec-analyzer.md",
@@ -37,7 +37,10 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
 
     assert created is True
     assert project_path.endswith("project.yml")
+    project_config = tmp_path.joinpath(".loom", "project.yml").read_text(encoding="utf-8")
     assert tmp_path.joinpath(".loom", "project.yml").exists()
+    assert "specs:\n  language: en" in project_config
+    assert load_project_config(tmp_path).spec_language == "en"
     assert not tmp_path.joinpath("project.yml").exists()
     assert tmp_path.joinpath(".loom", "loom.db").exists()
     assert tmp_path.joinpath(".loom", "runs").exists()
@@ -104,6 +107,15 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "artifact_file" in tasks_content
 
 
+def test_init_project_writes_requested_specs_language(tmp_path):
+    created, _ = init_project(tmp_path, language="zh")
+
+    assert created is True
+    project_config = tmp_path.joinpath(".loom", "project.yml").read_text(encoding="utf-8")
+    assert "specs:\n  language: zh" in project_config
+    assert load_project_config(tmp_path).spec_language == "zh"
+
+
 def test_init_project_without_claude_code_skips_claude_skills(tmp_path):
     init_project(tmp_path, integrations={"codex"})
 
@@ -129,7 +141,7 @@ def test_init_project_force_overwrites_existing_templates(tmp_path):
     init_project(tmp_path, force=True)
 
     content = plan_template.read_text(encoding="utf-8")
-    assert "# <需求名>技术方案" in content
+    assert "# <Requirement Name> Technical Plan" in content
     assert "custom plan template" not in content
 
 

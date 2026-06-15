@@ -338,7 +338,11 @@ class StageRunner:
         args = context.request.args
         requirement = str(args.get("requirement") or args.get("revision_note") or args.get("text") or "")
         existing = context.artifacts.read("spec") if args.get("revision_note") else None
-        content, error = self._artifact_content(context, "spec", lambda: create_llm_client().draft_spec(requirement, existing))
+        content, error = self._artifact_content(
+            context,
+            "spec",
+            lambda: create_llm_client().draft_spec(requirement, existing, context.config.spec_language),
+        )
         if error is not None:
             return error
         assert content is not None
@@ -365,7 +369,11 @@ class StageRunner:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         spec_hash = context.artifacts.hash_existing("spec")
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
-        content, error = self._artifact_content(context, "plan", lambda: create_llm_client().draft_plan(spec, constraints))
+        content, error = self._artifact_content(
+            context,
+            "plan",
+            lambda: create_llm_client().draft_plan(spec, constraints, context.config.spec_language),
+        )
         if error is not None:
             return error
         assert content is not None
@@ -397,7 +405,11 @@ class StageRunner:
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
-        content, error = self._artifact_content(context, "tasks", lambda: create_llm_client().draft_tasks(spec, plan, preference))
+        content, error = self._artifact_content(
+            context,
+            "tasks",
+            lambda: create_llm_client().draft_tasks(spec, plan, preference, context.config.spec_language),
+        )
         if error is not None:
             return error
         assert content is not None
@@ -592,7 +604,7 @@ class StageRunner:
             "runtime_refs": runtime_refs,
             "attempt_count": len(attempts),
         }
-        content, error = self._artifact_content(context, "ship", lambda: create_llm_client().draft_ship_summary(facts))
+        content, error = self._artifact_content(context, "ship", lambda: create_llm_client().draft_ship_summary(facts, context.config.spec_language))
         if error is not None:
             return error
         assert content is not None
