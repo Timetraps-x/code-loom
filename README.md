@@ -80,7 +80,7 @@ uv run loom --help
 Install from a Git tag:
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.2
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.3
 loom --help
 ```
 
@@ -92,10 +92,10 @@ uv tool install --editable <repo-path>
 
 ## Quick Start
 
-Initialize Claude Code integration in the target project:
+Initialize Claude Code integration in the target project. `loom init` defaults to the same Claude Code integration as `loom init --claude-code`:
 
 ```powershell
-loom init --claude-code
+loom init
 ```
 
 Then move through the stages:
@@ -119,7 +119,7 @@ The default output is human-readable. Add `--json` for machine output.
 
 ## Claude Code Slash Commands
 
-`loom init --claude-code` installs project-level slash commands:
+`loom init` / `loom init --claude-code` installs project-level slash commands:
 
 ```text
 /loom-spec
@@ -135,6 +135,9 @@ These commands draft clean Markdown artifacts and pass them to the CodeLoom Kern
 
 The current release focuses on the Python CLI + Claude Code integration:
 
+- A normal `loom init` creates `.loom/project.yml` with `runtime.default: claude-code`.
+- In generated config, `claude-code` uses `mode: host`: the current Claude Code session runs the task via begin/complete handoff instead of launching a nested `claude -p` process.
+- The `mock` runtime remains available for tests and explicit fallback initialization, but it is not the normal do-stage runtime.
 - Successful build tasks are recorded as `implemented`.
 - Successful verify tasks are recorded as `verified`.
 - Runtime failures, verification failures, and blocking findings are recorded with evidence.

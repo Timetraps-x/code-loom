@@ -122,15 +122,18 @@ Rules:
 
 def _agent_rule(command: str) -> str:
     if command == "do":
-        return """- For do-stage execution, the current task is the direct execution boundary.
-- For build tasks, use the project Claude Code agent `builder` from `.claude/agents/builder.md` when available.
-- For verify tasks, use the project Claude Code agent `verifier` from `.claude/agents/verifier.md` when available.
+        return """- For claude-code host runtime, do not run `loom stage do` as a one-shot execution command.
+- First run `loom stage do --branch <current-git-branch> --arg action=begin --arg task_id=<task-id>` and use the returned `extras.attempt_id`, `extras.lane`, `extras.main_agent`, and `extras.task_definition` as the execution boundary.
+- For build tasks, use the project Claude Code agent `builder` from `.claude/agents/builder.md` when available; `builder` is the build-lane main agent.
+- For verify tasks, use the project Claude Code agent `verifier` from `.claude/agents/verifier.md` when available; `verifier` is the verify-lane main agent.
 - `builder` may use `spec.md` or `plan.md` only when the task references a specific section or explicit pointer, when task context is ambiguous, or when implementation reveals a conflict with requirement semantics or design facts.
 - When local choices are open, `builder` may choose within the task boundary by considering existing-code consistency, correctness, performance, maintainability, change cost, and verification cost.
-- If execution would require changing requirement semantics, public contracts, data model semantics, major UI flow, preserved design constraints, or later task boundaries, report blocked instead of expanding the task.
+- If execution would require changing requirement semantics, public contracts, data model semantics, major UI flow, preserved design constraints, or later task boundaries, complete the attempt as `blocked` instead of expanding the task.
 - `builder` may delegate narrow codebase fact gathering or external research to `scout` when available, but `scout` must stay read-only and advisory.
 - After file modifications, `builder` must use the project Claude Code agent `code-reviewer` from `.claude/agents/code-reviewer.md` when available before closing the build attempt.
-- Build attempts must not claim full verification; Kernel records successful build tasks as implemented and successful verify tasks as verified."""
+- Complete the attempt by running `loom stage do --branch <current-git-branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=<implemented|verified|failed|blocked> --arg summary=<short-summary>`.
+- Build attempts must complete as `implemented`, `failed`, or `blocked`; they must not claim full verification.
+- Verify attempts must complete as `verified`, `failed`, or `blocked` with evidence from the verifier."""
     agent_name = STAGE_MAIN_AGENTS.get(command)
     if not agent_name:
         return ""

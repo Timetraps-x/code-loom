@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -473,6 +474,12 @@ class StageRunner:
         self._record_task_snapshots(context, tasks_content, tasks_hash)
         self._supersede_stale_task_state(context, tasks)
 
+        action = str(context.request.args.get("action") or "").strip().lower()
+        if action == "complete":
+            return self._run_do_complete(context, tasks, session_id)
+        if action and action != "begin":
+            return KernelResponse(status="failed", message=f"unsupported do action: {action}", recommended_next=_loom_command("do"), errors=["unsupported_do_action"])
+
         blocking = self._open_execution_blocking_findings(context)
         if blocking:
             recommendation = self._recommend_from_blocking_findings(context, blocking)
@@ -498,6 +505,32 @@ class StageRunner:
             return KernelResponse(status="ok", message=decision.message, recommended_next=decision.recommended_next)
         if decision.action in {"blocked", "superseded"}:
             return KernelResponse(status="blocked", message=decision.message, recommended_next=decision.recommended_next)
+        if action == "begin":
+            if latest_attempt and latest_attempt.get("status") == "running" and latest_attempt.get("task_fingerprint") == task.fingerprint:
+                return self._do_begin_response(task, int(latest_attempt["id"]), int(latest_attempt["attempt_no"]))
+            attempt_no = context.store.next_attempt_no(session_id, task.task_id)
+            attempt_id = context.store.create_attempt(
+                session_id,
+                task.task_id,
+                attempt_no,
+                context.config.default_runtime,
+                spec_hash,
+                plan_hash,
+                tasks_hash,
+                task.fingerprint,
+            )
+            return self._do_begin_response(task, attempt_id, attempt_no)
+
+        if context.config.default_runtime == "claude-code":
+            return KernelResponse(
+                status="blocked",
+                message="claude-code host runtime requires do action=begin and action=complete",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras={"task_id": task.task_id, "lane": task.lane, "main_agent": _do_main_agent(task.lane)},
+                errors=["host_runtime_requires_begin_complete"],
+            )
+
         if latest_attempt and latest_attempt.get("status") == "running":
             context.store.update_attempt(int(latest_attempt["id"]), "abandoned", "abandoned during recovery")
         elif latest_attempt and decision.action in {"retry", "reattempt"}:
@@ -564,6 +597,103 @@ class StageRunner:
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
         )
+
+    def _do_begin_response(self, task: TaskDefinition, attempt_id: int, attempt_no: int) -> KernelResponse:
+        return KernelResponse(
+            status="ok",
+            message="do attempt started",
+            recommended_next=self._recommended_do(task.task_id),
+            recommended_task_id=task.task_id,
+            extras={
+                "attempt_id": attempt_id,
+                "attempt_no": attempt_no,
+                "task_id": task.task_id,
+                "task_title": task.title,
+                "lane": task.lane,
+                "main_agent": _do_main_agent(task.lane),
+                "reviewer_agent": "code-reviewer" if task.lane == "build" else None,
+                "task_definition": task.raw,
+            },
+        )
+
+    def _run_do_complete(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
+        attempt_id_value = context.request.args.get("attempt_id")
+        if attempt_id_value is None:
+            return KernelResponse(status="failed", message="attempt_id is required for do complete", recommended_next=_loom_command("do"), errors=["missing_attempt_id"])
+        try:
+            attempt_id = int(str(attempt_id_value))
+        except ValueError:
+            return KernelResponse(status="failed", message=f"invalid attempt_id: {attempt_id_value}", recommended_next=_loom_command("do"), errors=["invalid_attempt_id"])
+
+        attempt = context.store.attempt(attempt_id)
+        if attempt is None:
+            return KernelResponse(status="failed", message=f"attempt not found: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_found"])
+        if int(attempt["branch_session_id"]) != session_id:
+            return KernelResponse(status="failed", message=f"attempt does not belong to this branch session: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_session_mismatch"])
+        if attempt.get("status") != "running":
+            return KernelResponse(status="failed", message=f"attempt is not running: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_running"])
+        task = next((item for item in tasks if item.task_id == attempt.get("task_id")), None)
+        if task is None:
+            return KernelResponse(status="failed", message=f"task not found for attempt: {attempt.get('task_id')}", recommended_next=_loom_command("tasks"), errors=["task_not_found"])
+
+        status = str(context.request.args.get("status") or "").strip().lower()
+        if status == "success":
+            status = "verified" if task.lane == "verify" else "implemented"
+        expected_success = "verified" if task.lane == "verify" else "implemented"
+        if status not in {expected_success, "failed", "blocked"}:
+            return KernelResponse(
+                status="failed",
+                message=f"invalid completion status for {task.lane} task: {status}",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["invalid_completion_status"],
+            )
+
+        final_status = status
+        summary = str(context.request.args.get("summary") or f"Host runtime completed {task.task_id}: {task.title}")
+        diff = _collect_host_diff(context.request.cwd)
+        stdout = str(context.request.args.get("stdout") or summary)
+        stderr = str(context.request.args.get("stderr") or "")
+        attempt_no = int(attempt["attempt_no"])
+        diff_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "diff.patch", diff)
+        stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stdout.log", stdout)
+        stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stderr.log", stderr)
+        context.store.add_runtime_ref(attempt_id, "diff", diff_ref)
+        context.store.add_runtime_ref(attempt_id, "stdout", stdout_ref)
+        context.store.add_runtime_ref(attempt_id, "stderr", stderr_ref)
+        context.store.update_attempt(attempt_id, final_status, summary)
+
+        if final_status in {"failed", "blocked"}:
+            context.store.add_finding(
+                session_id,
+                attempt_id,
+                "verification_failure" if final_status == "failed" else "execution_blocked",
+                "blocking",
+                f"do attempt {final_status} for {task.task_id}",
+                _loom_command("do"),
+            )
+            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
+        else:
+            if final_status == "verified":
+                context.store.resolve_open_findings_for_attempt(attempt_id, "verification_failure")
+            next_task = self._select_recommended_task(context, tasks)
+            recommendation = NextRecommendation(_loom_command("ship")) if next_task is None else NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+
+        context.store.update_branch_session(
+            session_id,
+            active_stage="do",
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+        )
+        response_status = "ok" if final_status in {"implemented", "verified"} else final_status
+        return KernelResponse(
+            status=response_status,
+            message=summary,
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+            extras={"attempt_id": attempt_id, "task_id": task.task_id, "status": final_status},
+        )
+
 
     def _run_ship(self, context: StageContext) -> KernelResponse:
         session_id = int(context.session["id"])
@@ -674,3 +804,23 @@ class StageRunner:
                     return task
             return None
         return self._select_recommended_task(context, tasks)
+
+
+def _do_main_agent(lane: str) -> str:
+    return "verifier" if lane == "verify" else "builder"
+
+
+def _collect_host_diff(repo_path: Path) -> str:
+    try:
+        diff = subprocess.run(["git", "diff", "--"], cwd=repo_path, capture_output=True, text=True)
+        status = subprocess.run(["git", "status", "--short"], cwd=repo_path, capture_output=True, text=True)
+    except FileNotFoundError:
+        return ""
+    chunks: list[str] = []
+    if diff.returncode == 0 and diff.stdout.strip():
+        chunks.append(diff.stdout.strip())
+    if status.returncode == 0:
+        untracked = [line[3:].strip() for line in status.stdout.splitlines() if line.startswith("?? ")]
+        if untracked:
+            chunks.append("Untracked files:\n" + "\n".join(f"- {path}" for path in untracked))
+    return "\n\n".join(chunks).strip()

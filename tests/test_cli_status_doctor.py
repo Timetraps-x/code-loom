@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from codeloom.app.init_project import load_project_config
 from codeloom.cli.main import main
 
 
@@ -12,6 +13,7 @@ def test_cli_defaults_to_human_output(tmp_path, capsys):
     assert exit_code == 0
     assert output.startswith("Status: ok")
     assert not output.lstrip().startswith("{")
+    assert load_project_config(tmp_path).default_runtime == "claude-code"
 
 
 def test_cli_json_flag_emits_compact_json(tmp_path, capsys):

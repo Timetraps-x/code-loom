@@ -40,7 +40,12 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     project_config = tmp_path.joinpath(".loom", "project.yml").read_text(encoding="utf-8")
     assert tmp_path.joinpath(".loom", "project.yml").exists()
     assert "specs:\n  language: en" in project_config
-    assert load_project_config(tmp_path).spec_language == "en"
+    assert "runtime:\n  default: claude-code" in project_config
+    assert "claude-code:\n      enabled: true" in project_config
+    assert "mode: host" in project_config
+    project_config_data = load_project_config(tmp_path)
+    assert project_config_data.spec_language == "en"
+    assert project_config_data.default_runtime == "claude-code"
     assert not tmp_path.joinpath("project.yml").exists()
     assert tmp_path.joinpath(".loom", "loom.db").exists()
     assert tmp_path.joinpath(".loom", "runs").exists()
@@ -100,7 +105,11 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "builder" in do_content
     assert "code-reviewer" in do_content
     assert "verifier" in do_content
-    assert "Build attempts must not claim full verification" in do_content
+    assert "Build attempts must complete as `implemented`, `failed`, or `blocked`" in do_content
+    assert "action=begin" in do_content
+    assert "action=complete" in do_content
+    assert "builder` is the build-lane main agent" in do_content
+    assert "verifier` is the verify-lane main agent" in do_content
     assert "specs/<branch-slug>/plan.md" in plan_content
     assert "agent output contracts" in plan_content
     assert "specs/<branch-slug>/tasks.md" in tasks_content
@@ -116,12 +125,38 @@ def test_init_project_writes_requested_specs_language(tmp_path):
     assert load_project_config(tmp_path).spec_language == "zh"
 
 
-def test_init_project_without_claude_code_skips_claude_skills(tmp_path):
+def test_init_project_without_claude_code_uses_mock_runtime_and_skips_claude_skills(tmp_path):
     init_project(tmp_path, integrations={"codex"})
 
+    project_config = tmp_path.joinpath(".loom", "project.yml").read_text(encoding="utf-8")
+    assert "runtime:\n  default: mock" in project_config
+    assert "codex:\n      enabled: true" in project_config
+    assert load_project_config(tmp_path).default_runtime == "mock"
     assert not tmp_path.joinpath(".claude", "skills", "loom-spec", "SKILL.md").exists()
     assert not tmp_path.joinpath(".claude", "agents", "spec-analyzer.md").exists()
 
+
+def test_init_project_preserves_existing_runtime_without_force(tmp_path):
+    init_project(tmp_path)
+    project_path = tmp_path.joinpath(".loom", "project.yml")
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8").replace("default: claude-code", "default: mock"),
+        encoding="utf-8",
+    )
+
+    created, _ = init_project(tmp_path)
+
+    assert created is False
+    assert load_project_config(tmp_path).default_runtime == "mock"
+
+
+def test_init_project_force_regenerates_runtime_from_selected_integrations(tmp_path):
+    init_project(tmp_path, integrations={"codex"})
+
+    created, _ = init_project(tmp_path, force=True)
+
+    assert created is True
+    assert load_project_config(tmp_path).default_runtime == "claude-code"
 
 def test_init_project_preserves_existing_templates_without_force(tmp_path):
     init_project(tmp_path)

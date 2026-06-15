@@ -78,7 +78,7 @@ uv run loom --help
 从 Git tag 安装：
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.2
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.3
 loom --help
 ```
 
@@ -90,10 +90,10 @@ uv tool install --editable <repo-path>
 
 ## 快速开始
 
-在目标项目中初始化 Claude Code 集成：
+在目标项目中初始化 Claude Code 集成。`loom init` 默认等价于选择 `loom init --claude-code`：
 
 ```powershell
-loom init --claude-code
+loom init
 ```
 
 然后按阶段推进：
@@ -117,7 +117,7 @@ loom doctor
 
 ## Claude Code slash commands
 
-`loom init --claude-code` 会安装项目级 slash commands：
+`loom init` / `loom init --claude-code` 会安装项目级 slash commands：
 
 ```text
 /loom-spec
@@ -133,6 +133,9 @@ loom doctor
 
 当前版本重点支持 Python CLI + Claude Code 集成：
 
+- 普通 `loom init` 会生成 `.loom/project.yml`，并设置 `runtime.default: claude-code`。
+- 生成的配置中，`claude-code` 使用 `mode: host`：由当前 Claude Code 会话通过 begin/complete handoff 执行 task，而不是再启动嵌套的 `claude -p` 进程。
+- `mock` runtime 保留给测试和显式 fallback 初始化，不作为正常 do 阶段 runtime。
 - build task 成功后记录为 `implemented`。
 - verify task 成功后记录为 `verified`。
 - runtime 失败、验证失败或阻塞会记录为 `failed` 并保留 evidence。

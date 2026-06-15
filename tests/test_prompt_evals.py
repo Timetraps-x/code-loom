@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from importlib import resources
 
 from codeloom.app.claude_plugin import _agent_rule, _content_rule
-from codeloom.kernel.artifacts import TaskDefinition
-from codeloom.runtime_clients.claude_code import _task_prompt
+
 
 
 @dataclass(frozen=True)
@@ -240,8 +239,8 @@ def test_loom_do_skill_prompt_eval_bad_cases():
             surface=prompt,
             badcase="builder changes data model semantics during do execution",
             required_guardrails=(
-                "current task is the direct execution boundary",
-                "report blocked instead of expanding the task",
+                "execution boundary",
+                "complete the attempt as `blocked` instead of expanding the task",
                 "preserved design constraints",
             ),
         ),
@@ -257,30 +256,22 @@ def test_loom_do_skill_prompt_eval_bad_cases():
         _assert_guardrails(case)
 
 
-def test_claude_runtime_prompt_eval_lane_cases():
-    build_task = TaskDefinition("T1", "Implement report query", "- [ ] T1: Implement report query\n  - Notes: preserve task context", "fp-build", "build")
-    verify_task = TaskDefinition("T2", "Verify report query", "- [ ] T2: Verify report query", "fp-verify", "verify")
-
-    build_prompt = _task_prompt(build_task)
-    verify_prompt = _task_prompt(verify_task)
+def test_loom_do_skill_prompt_eval_host_handoff_cases():
+    prompt = _agent_rule("do")
 
     for expected in (
-        "Task lane: build",
-        "Execute this build task within the current task boundary",
-        "Use spec.md or plan.md only when the task references a specific section or explicit pointer",
-        "existing-code consistency, correctness, performance, maintainability, change cost, and verification cost",
-        "preserved design constraints, or later task boundaries, stop as blocked",
-        "Use code-reviewer before closing the build attempt when files change",
-        "Task definition:",
-        "Notes: preserve task context",
-        "run loom stage commands from inside this task",
+        "do not run `loom stage do` as a one-shot execution command",
+        "action=begin",
+        "extras.attempt_id",
+        "extras.main_agent",
+        "builder` is the build-lane main agent",
+        "verifier` is the verify-lane main agent",
+        "action=complete",
+        "status=<implemented|verified|failed|blocked>",
+        "Build attempts must complete as `implemented`, `failed`, or `blocked`",
+        "Verify attempts must complete as `verified`, `failed`, or `blocked`",
     ):
-        assert expected in build_prompt
-
-    assert "Task lane: verify" in verify_prompt
-    assert "Report pass, fail, or blocked with evidence" in verify_prompt
-    assert "expected evidence from the task notes" in verify_prompt
-
+        assert expected in prompt
 
 def test_verifier_and_scout_prompt_eval_boundary_cases():
     verifier = _agent_prompt("verifier.md")
@@ -308,9 +299,6 @@ def test_prompt_eval_rejects_old_smallest_implementation_bias():
         "builder": _agent_prompt("builder.md"),
         "code-reviewer": _agent_prompt("code-reviewer.md"),
         "loom-do": _agent_rule("do"),
-        "claude-runtime-build": _task_prompt(
-            TaskDefinition("T1", "Implement behavior", "- [ ] T1: Implement behavior", "fp", "build")
-        ),
     }
     forbidden = (
         "Make the smallest implementation necessary",

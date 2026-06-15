@@ -11,6 +11,7 @@ BRANCH = "master"
 
 def init_repo(path: Path) -> Path:
     init_project(path)
+    write_project_config(path)
     return path
 
 
@@ -36,7 +37,7 @@ runtime:
       enabled: true
     claude-code:
       enabled: true
-      mode: cli
+      mode: host
 
 commands:
   test: {test_command}

@@ -9,7 +9,15 @@ from codeloom.app.claude_plugin import install_claude_skills
 from codeloom.persistence.sqlite import SQLiteStore
 
 
-def _default_project_yml(language: str = "en") -> str:
+def _default_project_yml(
+    language: str = "en",
+    default_runtime: str = "claude-code",
+    enabled_clients: set[str] | None = None,
+) -> str:
+    enabled_clients = enabled_clients or {default_runtime}
+    claude_code_enabled = _yaml_bool("claude-code" in enabled_clients)
+    codex_enabled = _yaml_bool("codex" in enabled_clients)
+    opencode_enabled = _yaml_bool("opencode" in enabled_clients)
     return f"""project:
   name: codeloom-demo
 
@@ -20,18 +28,18 @@ specs:
   language: {language}
 
 runtime:
-  default: mock
+  default: {default_runtime}
   clients:
     mock:
       enabled: true
     claude-code:
-      enabled: false
-      mode: cli
+      enabled: {claude_code_enabled}
+      mode: host
     codex:
-      enabled: false
+      enabled: {codex_enabled}
       mode: cli
     opencode:
-      enabled: false
+      enabled: {opencode_enabled}
       mode: sdk
 
 commands:
@@ -79,20 +87,28 @@ def init_project(cwd: Path, force: bool = False, integrations: set[str] | None =
     repo_path = cwd.resolve()
     loom_dir = repo_path / ".loom"
     loom_dir.mkdir(parents=True, exist_ok=True)
+    selected_integrations = integrations or {"claude-code"}
+    default_runtime = "claude-code" if "claude-code" in selected_integrations else "mock"
     project_path = loom_dir / "project.yml"
     if project_path.exists() and not force:
         created = False
     else:
-        project_path.write_text(_default_project_yml(language), encoding="utf-8")
+        project_path.write_text(
+            _default_project_yml(language, default_runtime, selected_integrations),
+            encoding="utf-8",
+        )
         created = True
     (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
     _initialize_templates(repo_path, force=force)
     SQLiteStore(repo_path).initialize()
-    selected_integrations = integrations or {"claude-code"}
     if "claude-code" in selected_integrations:
         install_claude_skills(repo_path, force=force)
         _initialize_claude_agents(repo_path, force=force)
     return created, str(project_path)
+
+
+def _yaml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _initialize_templates(repo_path: Path, force: bool = False) -> None:
