@@ -14,8 +14,8 @@ from codeloom.persistence.sqlite import SQLiteStore
 def run_doctor(cwd: Path) -> dict[str, Any]:
     repo_path = cwd.resolve()
     checks: list[dict[str, str]] = []
-    project_path = repo_path / "project.yml"
-    _add_check(checks, "project.yml", "ok" if project_path.exists() else "failed", _exists_message(project_path))
+    project_path = repo_path / ".loom" / "project.yml"
+    _add_check(checks, ".loom/project.yml", "ok" if project_path.exists() else "failed", _exists_message(project_path))
 
     config = load_project_config(repo_path)
     store = SQLiteStore(repo_path)

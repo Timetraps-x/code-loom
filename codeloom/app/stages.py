@@ -99,48 +99,65 @@ class StageRunner:
             context.session["recommended_task_id"] = recommendation.task_id
         return context
 
+    def _artifact_file_stage_kind(self, context: StageContext) -> str | None:
+        if not context.request.args.get("artifact_file"):
+            return None
+        command = _normalize_command(context.request.command)
+        if command in {"spec", "plan", "tasks"}:
+            return command
+        if command == "ship":
+            return "ship"
+        return None
+
     def _sync_artifact_state(self, context: StageContext) -> None:
         session_id = int(context.session["id"])
         updates: dict[str, str] = {}
+        skip_kind = self._artifact_file_stage_kind(context)
 
-        spec_hash = self._sync_one_artifact(context, "spec", "active_spec_hash")
+        spec_hash = None if skip_kind == "spec" else self._sync_one_artifact(context, "spec", "active_spec_hash")
         if spec_hash:
             updates["active_spec_hash"] = spec_hash
 
         current_spec_hash = updates.get("active_spec_hash") or context.session.get("active_spec_hash")
-        plan_hash = self._sync_one_artifact(
-            context,
-            "plan",
-            "active_plan_hash",
-            based_on_spec_hash=current_spec_hash,
-        )
-        if plan_hash:
-            updates["active_plan_hash"] = plan_hash
+        plan_hash = None
+        if skip_kind != "plan":
+            plan_hash = self._sync_one_artifact(
+                context,
+                "plan",
+                "active_plan_hash",
+                based_on_spec_hash=current_spec_hash,
+            )
+            if plan_hash:
+                updates["active_plan_hash"] = plan_hash
 
         latest_plan = context.store.latest_artifact_revision(session_id, "plan")
-        tasks_hash = self._sync_one_artifact(
-            context,
-            "tasks",
-            "active_tasks_hash",
-            based_on_spec_hash=latest_plan["based_on_spec_hash"] if latest_plan else current_spec_hash,
-            based_on_plan_hash=updates.get("active_plan_hash") or context.session.get("active_plan_hash"),
-        )
-        if tasks_hash:
-            updates["active_tasks_hash"] = tasks_hash
-            tasks_content = context.artifacts.read("tasks") or ""
-            self._record_task_snapshots(context, tasks_content, tasks_hash)
+        tasks_hash = None
+        if skip_kind != "tasks":
+            tasks_hash = self._sync_one_artifact(
+                context,
+                "tasks",
+                "active_tasks_hash",
+                based_on_spec_hash=latest_plan["based_on_spec_hash"] if latest_plan else current_spec_hash,
+                based_on_plan_hash=updates.get("active_plan_hash") or context.session.get("active_plan_hash"),
+            )
+            if tasks_hash:
+                updates["active_tasks_hash"] = tasks_hash
+                tasks_content = context.artifacts.read("tasks") or ""
+                self._record_task_snapshots(context, tasks_content, tasks_hash)
 
         latest_tasks = context.store.latest_artifact_revision(session_id, "tasks")
-        ship_hash = self._sync_one_artifact(
-            context,
-            "ship",
-            "active_ship_hash",
-            based_on_spec_hash=latest_tasks["based_on_spec_hash"] if latest_tasks else current_spec_hash,
-            based_on_plan_hash=latest_tasks["based_on_plan_hash"] if latest_tasks else context.session.get("active_plan_hash"),
-            based_on_tasks_hash=updates.get("active_tasks_hash") or context.session.get("active_tasks_hash"),
-        )
-        if ship_hash:
-            updates["active_ship_hash"] = ship_hash
+        ship_hash = None
+        if skip_kind != "ship":
+            ship_hash = self._sync_one_artifact(
+                context,
+                "ship",
+                "active_ship_hash",
+                based_on_spec_hash=latest_tasks["based_on_spec_hash"] if latest_tasks else current_spec_hash,
+                based_on_plan_hash=latest_tasks["based_on_plan_hash"] if latest_tasks else context.session.get("active_plan_hash"),
+                based_on_tasks_hash=updates.get("active_tasks_hash") or context.session.get("active_tasks_hash"),
+            )
+            if ship_hash:
+                updates["active_ship_hash"] = ship_hash
 
         if updates:
             context.store.update_branch_session(session_id, **updates)
@@ -292,26 +309,36 @@ class StageRunner:
                 context.store.supersede_attempt(attempt_id, "task definition changed")
                 context.store.supersede_open_findings_for_attempt(attempt_id)
 
-    def _candidate_content(
+    def _artifact_content(
         self,
         context: StageContext,
+        kind: str,
         fallback: Callable[[], str],
     ) -> tuple[str | None, KernelResponse | None]:
-        content_file = context.request.args.get("content_file")
-        if not content_file:
+        artifact_file = context.request.args.get("artifact_file")
+        if not artifact_file:
             return fallback(), None
-        path = Path(str(content_file))
+        path = Path(str(artifact_file))
         if not path.is_absolute():
             path = context.request.cwd / path
         if not path.exists():
-            return None, KernelResponse(status="failed", message=f"content_file not found: {path}", errors=["missing_content_file"])
-        return path.read_text(encoding="utf-8"), None
+            return None, KernelResponse(status="failed", message=f"artifact_file not found: {path}", errors=["missing_artifact_file"])
+
+        resolved_path = path.resolve()
+        expected_path = context.artifacts.path_for(kind).resolve()
+        if resolved_path != expected_path:
+            return None, KernelResponse(
+                status="failed",
+                message=f"artifact_file must be {context.artifacts.relative(expected_path)}",
+                errors=["invalid_artifact_file_location"],
+            )
+        return resolved_path.read_text(encoding="utf-8"), None
 
     def _run_spec(self, context: StageContext) -> KernelResponse:
         args = context.request.args
         requirement = str(args.get("requirement") or args.get("revision_note") or args.get("text") or "")
         existing = context.artifacts.read("spec") if args.get("revision_note") else None
-        content, error = self._candidate_content(context, lambda: create_llm_client().draft_spec(requirement, existing))
+        content, error = self._artifact_content(context, "spec", lambda: create_llm_client().draft_spec(requirement, existing))
         if error is not None:
             return error
         assert content is not None
@@ -338,7 +365,7 @@ class StageRunner:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         spec_hash = context.artifacts.hash_existing("spec")
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
-        content, error = self._candidate_content(context, lambda: create_llm_client().draft_plan(spec, constraints))
+        content, error = self._artifact_content(context, "plan", lambda: create_llm_client().draft_plan(spec, constraints))
         if error is not None:
             return error
         assert content is not None
@@ -370,7 +397,7 @@ class StageRunner:
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
-        content, error = self._candidate_content(context, lambda: create_llm_client().draft_tasks(spec, plan, preference))
+        content, error = self._artifact_content(context, "tasks", lambda: create_llm_client().draft_tasks(spec, plan, preference))
         if error is not None:
             return error
         assert content is not None
@@ -378,7 +405,7 @@ class StageRunner:
         if not tasks:
             return KernelResponse(
                 status="failed",
-                message="tasks.md candidate contains no parseable tasks",
+                message="tasks.md artifact contains no parseable tasks",
                 recommended_next=_loom_command("tasks"),
                 errors=["invalid_tasks_format"],
             )
@@ -483,7 +510,7 @@ class StageRunner:
         context.store.add_runtime_ref(attempt_id, "stdout", stdout_ref)
         context.store.add_runtime_ref(attempt_id, "stderr", stderr_ref)
 
-        verification_results = self.verifier.run(context.request.cwd, context.config.commands)
+        verification_results = self.verifier.run(context.request.cwd, context.config.commands) if task.lane == "verify" else []
         verification_failed = False
         for index, result in enumerate(verification_results, start=1):
             verify_stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, f"verify{index}.stdout.log", result.stdout)
@@ -492,7 +519,7 @@ class StageRunner:
             if result.status == "failed":
                 verification_failed = True
 
-        status = attempt_status(runtime_result.success, verification_failed)
+        status = attempt_status(task.lane, runtime_result.success, verification_failed)
         context.store.update_attempt(attempt_id, status, runtime_result.summary)
         if status == "verified":
             context.store.resolve_open_findings_for_attempt(attempt_id, "verification_failure")
@@ -502,7 +529,7 @@ class StageRunner:
                 attempt_id,
                 "verification_failure",
                 "blocking",
-                f"verification failed for {task.task_id}",
+                f"do attempt failed for {task.task_id}",
                 _loom_command("do"),
             )
         if status == "failed":
@@ -520,7 +547,7 @@ class StageRunner:
             recommended_task_id=recommendation.task_id,
         )
         return KernelResponse(
-            status="ok" if status == "verified" else "failed",
+            status="ok" if status != "failed" else "failed",
             message=runtime_result.summary,
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
@@ -546,14 +573,14 @@ class StageRunner:
         verification_warnings = []
         for task in tasks:
             latest = context.store.latest_attempt(session_id, task.task_id)
-            if latest and latest.get("status") == "verified":
+            if latest and self._task_completed(task, latest):
                 completed_tasks.append(task.task_id)
                 attempt_id = int(latest["id"])
                 runtime_refs.extend(ref["path"] for ref in context.store.runtime_refs(attempt_id))
-                if any(item["status"] == "skipped_config_missing" for item in context.store.verifications_for_attempt(attempt_id)):
+                if task.lane == "verify" and any(item["status"] == "skipped_config_missing" for item in context.store.verifications_for_attempt(attempt_id)):
                     verification_warnings.append(f"{task.task_id}: verification command missing")
-        all_verified = bool(tasks) and len(completed_tasks) == len(tasks)
-        ship_status = "shippable" if all_verified and not blocking else "blocked"
+        all_completed = bool(tasks) and len(completed_tasks) == len(tasks)
+        ship_status = "shippable" if all_completed and not blocking else "blocked"
         facts = {
             "status": ship_status,
             "spec_hash": spec_hash or "",
@@ -565,7 +592,7 @@ class StageRunner:
             "runtime_refs": runtime_refs,
             "attempt_count": len(attempts),
         }
-        content, error = self._candidate_content(context, lambda: create_llm_client().draft_ship_summary(facts))
+        content, error = self._artifact_content(context, "ship", lambda: create_llm_client().draft_ship_summary(facts))
         if error is not None:
             return error
         assert content is not None
@@ -590,7 +617,7 @@ class StageRunner:
         )
         return KernelResponse(
             status=response_status,
-            message=f"ship.md generated: {ship_status}",
+            message=f"release.md generated: {ship_status}",
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
             artifact_paths=[context.artifacts.relative(path)],
@@ -598,10 +625,16 @@ class StageRunner:
         )
 
     def _verification_summary(self, completed_count: int, task_count: int, warnings: list[str]) -> str:
-        summary = f"{completed_count}/{task_count} tasks verified"
+        summary = f"{completed_count}/{task_count} tasks completed"
         if warnings:
             summary += "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
         return summary
+
+    def _task_completed(self, task: TaskDefinition, attempt: dict[str, Any]) -> bool:
+        status = attempt.get("status")
+        if task.lane == "verify":
+            return status == "verified" and attempt.get("task_fingerprint") == task.fingerprint
+        return status == "implemented" and attempt.get("task_fingerprint") == task.fingerprint
 
 
     def _record_task_snapshots(self, context: StageContext, tasks_content: str, tasks_hash: str) -> None:
@@ -617,7 +650,7 @@ class StageRunner:
                 return task
         for task in tasks:
             latest = context.store.latest_attempt(session_id, task.task_id)
-            if latest is None or latest.get("status") != "verified" or latest.get("task_fingerprint") != task.fingerprint:
+            if latest is None or not self._task_completed(task, latest):
                 return task
         return None
 

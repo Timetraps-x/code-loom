@@ -35,6 +35,6 @@ class ContractRevisionResolver:
             return ResolverDecision("continue", "latest attempt is still running", "/loom-do")
         if status == "failed":
             return ResolverDecision("retry", "latest attempt failed", "/loom-do")
-        if status == "verified":
-            return ResolverDecision("verified", "task already verified", "/loom-ship")
+        if status == "verified" or (status == "implemented" and task.lane == "build"):
+            return ResolverDecision("verified", f"task already {status}", "/loom-ship")
         return ResolverDecision("execute", f"latest attempt status is {status}", "/loom-do")

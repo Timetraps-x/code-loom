@@ -1,6 +1,35 @@
 from __future__ import annotations
 
+from importlib import resources
+
 from codeloom.app.init_project import init_project
+
+AGENT_NAMES = (
+    "spec-analyzer.md",
+    "plan-architect.md",
+    "task-planner.md",
+    "builder.md",
+    "verifier.md",
+    "release-analyzer.md",
+    "code-reviewer.md",
+    "scout.md",
+    "spec-reviewer.md",
+    "plan-reviewer.md",
+    "task-reviewer.md",
+)
+
+STAGE_AGENT_RESPONSIBILITIES = {
+    "spec-analyzer.md": "requirement semantics",
+    "plan-architect.md": "system design",
+    "task-planner.md": "execution slicing",
+    "release-analyzer.md": "delivery confirmation",
+}
+
+REVIEWER_AGENTS = {
+    "spec-reviewer.md": "spec-analyzer",
+    "plan-reviewer.md": "plan-architect",
+    "task-reviewer.md": "task-planner",
+}
 
 
 def test_init_project_creates_config_runtime_and_skills(tmp_path):
@@ -8,18 +37,171 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
 
     assert created is True
     assert project_path.endswith("project.yml")
-    assert tmp_path.joinpath("project.yml").exists()
+    assert tmp_path.joinpath(".loom", "project.yml").exists()
+    assert not tmp_path.joinpath("project.yml").exists()
     assert tmp_path.joinpath(".loom", "loom.db").exists()
     assert tmp_path.joinpath(".loom", "runs").exists()
+    templates_dir = tmp_path.joinpath(".loom", "templates")
+    assert templates_dir.joinpath("spec-template.md").exists()
+    assert templates_dir.joinpath("plan-template.md").exists()
+    assert templates_dir.joinpath("tasks-template.md").exists()
+    assert templates_dir.joinpath("release-template.md").exists()
     skill_path = tmp_path.joinpath(".claude", "skills", "loom-spec", "SKILL.md")
     assert skill_path.exists()
     content = skill_path.read_text(encoding="utf-8")
     assert "name: loom-spec" in content
     assert "user-invocable: true" in content
     assert "disable-model-invocation: false" in content
+    assert ".loom/templates/spec-template.md" in content
+    agents_dir = tmp_path.joinpath(".claude", "agents")
+    for agent_name in AGENT_NAMES:
+        assert agents_dir.joinpath(agent_name).exists()
+    assert not tmp_path.joinpath(".loom", "agents").exists()
+    assert "spec-analyzer" in content
+    assert "requirement semantics" in content
+    assert "AskUserQuestion" in content
+    assert "scout" in content
+    assert "spec-reviewer" in content
+    assert "advisory only" in content
+    assert "must not write artifacts" in content
+    ship_skill_path = tmp_path.joinpath(".claude", "skills", "loom-ship", "SKILL.md")
+    ship_content = ship_skill_path.read_text(encoding="utf-8")
+    assert "release.md" in ship_content
+    assert ".loom/templates/release-template.md" in ship_content
+    assert "release-analyzer" in ship_content
+    assert "delivery confirmation" in ship_content
+    assert "scout" in ship_content
+    assert "No separate reviewer agent" in ship_content
+    assert "user-facing Markdown" in ship_content
+    assert "specs/<branch-slug>/release.md" in ship_content
+    assert "artifact_file" in ship_content
+    plan_content = tmp_path.joinpath(".claude", "skills", "loom-plan", "SKILL.md").read_text(encoding="utf-8")
+    tasks_content = tmp_path.joinpath(".claude", "skills", "loom-tasks", "SKILL.md").read_text(encoding="utf-8")
+    do_content = tmp_path.joinpath(".claude", "skills", "loom-do", "SKILL.md").read_text(encoding="utf-8")
+    assert "plan-architect" in plan_content
+    assert "plan-reviewer" in plan_content
+    assert "system design" in plan_content
+    assert "scout" in plan_content
+    assert "task-planner" in tasks_content
+    assert "task-reviewer" in tasks_content
+    assert "execution slicing" in tasks_content
+    assert "generic large rubric" in tasks_content
+    assert "scout" in tasks_content
+    assert "build or verify tasks only" in tasks_content
+    assert "do not create scout" in tasks_content
+    assert "do not each need independent functional verification" in tasks_content
+    assert "Verify tasks may cover multiple naturally related build tasks" in tasks_content
+    assert "Missing facts that block safe slicing" in tasks_content
+    assert "Do not copy large plan sections" in tasks_content
+    assert "Optional `## Ship inputs` content is non-executable" in tasks_content
+    assert "builder" in do_content
+    assert "code-reviewer" in do_content
+    assert "verifier" in do_content
+    assert "Build attempts must not claim full verification" in do_content
+    assert "specs/<branch-slug>/plan.md" in plan_content
+    assert "agent output contracts" in plan_content
+    assert "specs/<branch-slug>/tasks.md" in tasks_content
+    assert "artifact_file" in tasks_content
 
 
 def test_init_project_without_claude_code_skips_claude_skills(tmp_path):
     init_project(tmp_path, integrations={"codex"})
 
     assert not tmp_path.joinpath(".claude", "skills", "loom-spec", "SKILL.md").exists()
+    assert not tmp_path.joinpath(".claude", "agents", "spec-analyzer.md").exists()
+
+
+def test_init_project_preserves_existing_templates_without_force(tmp_path):
+    init_project(tmp_path)
+    plan_template = tmp_path.joinpath(".loom", "templates", "plan-template.md")
+    plan_template.write_text("custom plan template", encoding="utf-8")
+
+    init_project(tmp_path)
+
+    assert plan_template.read_text(encoding="utf-8") == "custom plan template"
+
+
+def test_init_project_force_overwrites_existing_templates(tmp_path):
+    init_project(tmp_path)
+    plan_template = tmp_path.joinpath(".loom", "templates", "plan-template.md")
+    plan_template.write_text("custom plan template", encoding="utf-8")
+
+    init_project(tmp_path, force=True)
+
+    content = plan_template.read_text(encoding="utf-8")
+    assert "# <需求名>技术方案" in content
+    assert "custom plan template" not in content
+
+
+def test_init_project_preserves_existing_agents_without_force(tmp_path):
+    init_project(tmp_path)
+    agent_path = tmp_path.joinpath(".claude", "agents", "spec-analyzer.md")
+    agent_path.write_text("custom spec analyzer", encoding="utf-8")
+
+    init_project(tmp_path)
+
+    assert agent_path.read_text(encoding="utf-8") == "custom spec analyzer"
+
+
+def test_init_project_force_overwrites_existing_agents(tmp_path):
+    init_project(tmp_path)
+    agent_path = tmp_path.joinpath(".claude", "agents", "spec-analyzer.md")
+    agent_path.write_text("custom spec analyzer", encoding="utf-8")
+
+    init_project(tmp_path, force=True)
+
+    content = agent_path.read_text(encoding="utf-8")
+    assert "name: spec-analyzer" in content
+    assert "requirement semantics" in content
+    assert "custom spec analyzer" not in content
+
+
+def test_bundled_agent_resources_are_packaged():
+    bundled_agents = resources.files("codeloom.agents")
+
+    for agent_name in AGENT_NAMES:
+        content = bundled_agents.joinpath(agent_name).read_text(encoding="utf-8")
+        assert content
+        if agent_name in STAGE_AGENT_RESPONSIBILITIES:
+            assert "specs/<branch-slug>/" in content
+            assert "artifact_file" in content
+            assert "only user-facing Markdown" in content
+            assert "Blocked handling" in content
+            assert STAGE_AGENT_RESPONSIBILITIES[agent_name] in content
+            if agent_name == "task-planner.md":
+                assert "Every executable task must be either" in content
+                assert "A build task does not need to independently prove the whole feature works" in content
+                assert "## Ship inputs" in content
+                assert "Do not copy large plan sections" in content
+        if agent_name == "builder.md":
+            assert "build-lane main agent" in content
+            assert "code-reviewer" in content
+            assert "Do not self-mark the task verified" in content
+            assert "Treat the current task as the direct execution boundary" in content
+            assert "existing-code consistency, correctness, performance, maintainability, change cost, and verification cost" in content
+            assert "report which upstream artifact needs revision" in content
+        if agent_name == "verifier.md":
+            assert "verify-lane main agent" in content
+            assert "revise_spec_plan_tasks" in content
+            assert "Do not broaden verification to the whole plan" in content
+            assert "missing evidence" in content
+        if agent_name == "code-reviewer.md":
+            assert "required subagent" in content
+            assert "Return findings to `builder`" in content
+            assert "current task boundary" in content
+            assert "boundary_violation" in content
+        if agent_name == "scout.md":
+            assert "Observed project facts" in content
+            assert "codebase mode" in content
+            assert "external mode" in content
+            assert "Answer one bounded factual question" in content
+            assert "for one local choice" in content
+            assert "Write final stage artifacts" in content
+        if agent_name in REVIEWER_AGENTS:
+            assert "advisory reviewer" in content
+            assert "Do not" in content
+            assert "Decide pass/fail" in content
+            assert REVIEWER_AGENTS[agent_name] in content
+            if agent_name == "task-reviewer.md":
+                assert "Grouped verification is allowed" in content
+                assert "Do not require every build task to have independent functional verification" in content

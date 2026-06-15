@@ -101,6 +101,16 @@ class SQLiteStore:
         based_on_tasks_hash: str | None = None,
     ) -> int:
         with self.connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT id FROM artifact_revisions
+                WHERE branch_session_id = ? AND kind = ? AND content_hash = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session_id, kind, content_hash),
+            ).fetchone()
+            if existing:
+                return int(existing["id"])
             cursor = conn.execute(
                 """
                 INSERT INTO artifact_revisions

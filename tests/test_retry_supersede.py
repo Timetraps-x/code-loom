@@ -5,21 +5,22 @@ from codeloom.persistence.sqlite import SQLiteStore
 from tests.helpers import init_repo, run_stage, write_project_config
 
 
-def test_failed_verification_can_retry_same_task(tmp_path):
+def test_failed_verify_lane_can_retry_same_task(tmp_path):
     repo = init_repo(tmp_path)
     run_stage(repo, "spec")
     run_stage(repo, "plan")
     run_stage(repo, "tasks")
+    run_stage(repo, "do", task_id="T1")
     write_project_config(repo, 'python -c "raise SystemExit(1)"')
 
-    failed = run_stage(repo, "do", task_id="T1")
+    failed = run_stage(repo, "do", task_id="T2")
     assert failed.status == "failed"
-    assert failed.recommended_next == "/loom-do T1"
+    assert failed.recommended_next == "/loom-do T2"
 
     write_project_config(repo, 'python -c "raise SystemExit(0)"')
-    retried = run_stage(repo, "do", task_id="T1")
+    retried = run_stage(repo, "do", task_id="T2")
     assert retried.status == "ok"
-    assert retried.recommended_next == "/loom-do T2"
+    assert retried.recommended_next == "/loom-ship"
 
     store = SQLiteStore(repo)
     session = store.branch_session("master")
@@ -36,7 +37,7 @@ def test_changed_task_definition_supersedes_old_attempt(tmp_path):
     run_stage(repo, "do", task_id="T1")
 
     tasks_path = repo / "specs" / "master" / "tasks.md"
-    tasks_path.write_text("# Tasks\n\n- [ ] T1: Implement changed requirement\n- [ ] T2: Verify current CodeLoom requirement\n", encoding="utf-8")
+    tasks_path.write_text("# Tasks\n\n- [ ] T1: Implement changed requirement\n  - Lane: build\n\n- [ ] T2: Verify current CodeLoom requirement\n  - Lane: verify\n", encoding="utf-8")
     response = run_stage(repo, "do", task_id="T1")
 
     assert response.status == "ok"
@@ -45,7 +46,7 @@ def test_changed_task_definition_supersedes_old_attempt(tmp_path):
     assert session is not None
     attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
     assert attempts[0]["status"] == "superseded"
-    assert attempts[-1]["status"] == "verified"
+    assert attempts[-1]["status"] == "implemented"
 
 
 def test_removed_task_supersedes_old_attempt(tmp_path):

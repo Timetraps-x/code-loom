@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
+
 from codeloom.app.claude_plugin import install_claude_skills
 
 from codeloom.persistence.sqlite import SQLiteStore
@@ -40,6 +42,27 @@ rules:
     - AGENTS.md
 """
 
+DEFAULT_TEMPLATE_NAMES = (
+    "spec-template.md",
+    "plan-template.md",
+    "tasks-template.md",
+    "release-template.md",
+)
+
+DEFAULT_AGENT_NAMES = (
+    "spec-analyzer.md",
+    "plan-architect.md",
+    "task-planner.md",
+    "builder.md",
+    "verifier.md",
+    "release-analyzer.md",
+    "code-reviewer.md",
+    "scout.md",
+    "spec-reviewer.md",
+    "plan-reviewer.md",
+    "task-reviewer.md",
+)
+
 
 @dataclass(frozen=True)
 class ProjectConfig:
@@ -50,22 +73,50 @@ class ProjectConfig:
 
 def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None) -> tuple[bool, str]:
     repo_path = cwd.resolve()
-    project_path = repo_path / "project.yml"
+    loom_dir = repo_path / ".loom"
+    loom_dir.mkdir(parents=True, exist_ok=True)
+    project_path = loom_dir / "project.yml"
     if project_path.exists() and not force:
         created = False
     else:
         project_path.write_text(DEFAULT_PROJECT_YML, encoding="utf-8")
         created = True
-    (repo_path / ".loom" / "runs").mkdir(parents=True, exist_ok=True)
+    (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
+    _initialize_templates(repo_path, force=force)
     SQLiteStore(repo_path).initialize()
     selected_integrations = integrations or {"claude-code"}
     if "claude-code" in selected_integrations:
         install_claude_skills(repo_path, force=force)
+        _initialize_claude_agents(repo_path, force=force)
     return created, str(project_path)
 
 
+def _initialize_templates(repo_path: Path, force: bool = False) -> None:
+    templates_dir = repo_path / ".loom" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    bundled_templates = resources.files("codeloom.templates")
+    for template_name in DEFAULT_TEMPLATE_NAMES:
+        destination = templates_dir / template_name
+        if destination.exists() and not force:
+            continue
+        content = bundled_templates.joinpath(template_name).read_text(encoding="utf-8")
+        destination.write_text(content, encoding="utf-8")
+
+
+def _initialize_claude_agents(repo_path: Path, force: bool = False) -> None:
+    agents_dir = repo_path / ".claude" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    bundled_agents = resources.files("codeloom.agents")
+    for agent_name in DEFAULT_AGENT_NAMES:
+        destination = agents_dir / agent_name
+        if destination.exists() and not force:
+            continue
+        content = bundled_agents.joinpath(agent_name).read_text(encoding="utf-8")
+        destination.write_text(content, encoding="utf-8")
+
+
 def load_project_config(cwd: Path) -> ProjectConfig:
-    project_path = cwd.resolve() / "project.yml"
+    project_path = cwd.resolve() / ".loom" / "project.yml"
     if not project_path.exists():
         return ProjectConfig()
     artifact_root = "specs"
