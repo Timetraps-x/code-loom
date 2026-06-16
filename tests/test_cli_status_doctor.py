@@ -6,6 +6,11 @@ from codeloom.app.init_project import load_project_config
 from codeloom.cli.main import main
 
 
+def _write_spec_artifact(repo):
+    spec_path = repo / "specs" / "master" / "spec.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("# Spec\n\n## Requirement\nCLI spec\n", encoding="utf-8")
+
 def test_cli_defaults_to_human_output(tmp_path, capsys):
     exit_code = main(["init", "--cwd", str(tmp_path)])
     output = capsys.readouterr().out
@@ -20,13 +25,40 @@ def test_cli_json_flag_emits_compact_json(tmp_path, capsys):
     main(["init", "--cwd", str(tmp_path)])
     capsys.readouterr()
 
-    exit_code = main(["stage", "spec", "--cwd", str(tmp_path), "--branch", "master", "--json"])
+    _write_spec_artifact(tmp_path)
+    exit_code = main([
+        "stage",
+        "spec",
+        "--cwd",
+        str(tmp_path),
+        "--branch",
+        "master",
+        "--arg",
+        "artifact_file=specs/master/spec.md",
+        "--json",
+    ])
     output = capsys.readouterr().out
     payload = json.loads(output)
 
     assert exit_code == 0
     assert payload["status"] == "ok"
     assert payload["recommended_next"] == "/loom-plan"
+
+
+def test_cli_stage_spec_without_artifact_file_reports_host_handoff(tmp_path, capsys):
+    main(["init", "--cwd", str(tmp_path)])
+    capsys.readouterr()
+
+    exit_code = main(["stage", "spec", "--cwd", str(tmp_path), "--branch", "master", "--json"])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 1
+    assert payload["status"] == "blocked"
+    assert payload["errors"] == ["host_artifact_required"]
+    assert payload["recommended_next"] == "/loom-spec"
+    assert payload["extras"]["main_agent"] == "spec-analyzer"
+    assert payload["extras"]["artifact_path"] == "specs/master/spec.md"
 
 def test_init_accepts_integration_flags(tmp_path, capsys):
     exit_code = main([
@@ -46,7 +78,8 @@ def test_init_accepts_integration_flags(tmp_path, capsys):
 
 def test_status_reports_branch_summary(tmp_path, capsys):
     main(["init", "--cwd", str(tmp_path)])
-    main(["stage", "spec", "--cwd", str(tmp_path), "--branch", "master"])
+    _write_spec_artifact(tmp_path)
+    main(["stage", "spec", "--cwd", str(tmp_path), "--branch", "master", "--arg", "artifact_file=specs/master/spec.md"])
     capsys.readouterr()
 
     exit_code = main(["status", "--cwd", str(tmp_path), "--branch", "master"])

@@ -38,6 +38,18 @@ class NextRecommendation:
 def _loom_command(command: str) -> str:
     return f"/loom-{command}"
 
+ARTIFACT_STAGE_MAIN_AGENTS = {
+    "spec": "spec-analyzer",
+    "plan": "plan-architect",
+    "tasks": "task-planner",
+    "ship": "release-analyzer",
+}
+
+ARTIFACT_STAGE_REVIEWERS = {
+    "spec": "spec-reviewer",
+    "plan": "plan-reviewer",
+    "tasks": "task-reviewer",
+}
 
 def _normalize_command(command: str) -> str:
     if command.startswith("/loom-"):
@@ -259,6 +271,34 @@ class StageRunner:
     def _recommended_do(self, task_id: str) -> str:
         return f"{_loom_command('do')} {task_id}"
 
+    def _write_runtime_ref(
+        self,
+        context: StageContext,
+        attempt_id: int,
+        task_id: str,
+        attempt_no: int,
+        kind: str,
+        filename_kind: str,
+        content: str,
+    ) -> str | None:
+        ref = self._write_attempt_file_if_not_empty(context, task_id, attempt_no, filename_kind, content)
+        if ref is not None:
+            context.store.add_runtime_ref(attempt_id, kind, ref)
+        return ref
+
+    def _write_attempt_file_if_not_empty(
+        self,
+        context: StageContext,
+        task_id: str,
+        attempt_no: int,
+        filename_kind: str,
+        content: str,
+    ) -> str | None:
+        if not content.strip():
+            return None
+        return context.evidence.write_attempt_file(task_id, attempt_no, filename_kind, content)
+
+
     def _open_execution_blocking_findings(self, context: StageContext) -> list[dict[str, Any]]:
         session_id = int(context.session["id"])
         return [
@@ -310,6 +350,29 @@ class StageRunner:
                 context.store.supersede_attempt(attempt_id, "task definition changed")
                 context.store.supersede_open_findings_for_attempt(attempt_id)
 
+    def _host_artifact_required_response(self, context: StageContext, kind: str) -> KernelResponse | None:
+        if context.config.default_runtime != "claude-code" or context.request.args.get("artifact_file"):
+            return None
+
+        artifact_path = context.artifacts.relative(context.artifacts.path_for(kind))
+        command = _loom_command("ship" if kind == "ship" else kind)
+        register_command = f"loom stage {kind} --branch {context.request.branch_name} --arg artifact_file={artifact_path}"
+        return KernelResponse(
+            status="blocked",
+            message=f"{kind} requires a host-authored artifact_file in claude-code mode",
+            recommended_next=command,
+            artifact_paths=[artifact_path],
+            errors=["host_artifact_required"],
+            extras={
+                "stage": kind,
+                "main_agent": ARTIFACT_STAGE_MAIN_AGENTS[kind],
+                "reviewer_agent": ARTIFACT_STAGE_REVIEWERS.get(kind),
+                "artifact_path": artifact_path,
+                "register_command": register_command,
+            },
+        )
+
+
     def _artifact_content(
         self,
         context: StageContext,
@@ -335,10 +398,49 @@ class StageRunner:
             )
         return resolved_path.read_text(encoding="utf-8"), None
 
-    def _run_spec(self, context: StageContext) -> KernelResponse:
+    def _spec_fallback_input(self, context: StageContext) -> tuple[str, str | None]:
         args = context.request.args
-        requirement = str(args.get("requirement") or args.get("revision_note") or args.get("text") or "")
-        existing = context.artifacts.read("spec") if args.get("revision_note") else None
+        revision_note = str(args.get("revision_note") or "")
+        if revision_note:
+            return revision_note, context.artifacts.read("spec")
+
+        requirement = str(args.get("requirement") or "")
+        if requirement:
+            return requirement, None
+
+        text = str(args.get("text") or "")
+        if text:
+            return text, context.artifacts.read("spec")
+
+        freeform = self._freeform_spec_arg(args)
+        if freeform:
+            return freeform, context.artifacts.read("spec")
+
+        return "", None
+
+    def _freeform_spec_arg(self, args: dict[str, str]) -> str:
+        known = {"artifact_file", "requirement", "revision_note", "text"}
+        bare_parts: list[str] = []
+        gap: str | None = None
+        for key, value in args.items():
+            if key in known:
+                continue
+            if value:
+                if key == "gap":
+                    gap = str(value)
+                continue
+            bare_parts.append(str(key))
+
+        if bare_parts:
+            return " ".join(part.strip() for part in bare_parts if part.strip())
+        return gap or ""
+
+
+    def _run_spec(self, context: StageContext) -> KernelResponse:
+        blocked = self._host_artifact_required_response(context, "spec")
+        if blocked is not None:
+            return blocked
+        requirement, existing = self._spec_fallback_input(context)
         content, error = self._artifact_content(
             context,
             "spec",
@@ -369,6 +471,9 @@ class StageRunner:
         if spec is None:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         spec_hash = context.artifacts.hash_existing("spec")
+        blocked = self._host_artifact_required_response(context, "plan")
+        if blocked is not None:
+            return blocked
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
         content, error = self._artifact_content(
             context,
@@ -403,6 +508,9 @@ class StageRunner:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         if plan is None:
             return KernelResponse(status="failed", message="plan.md is required", recommended_next=_loom_command("plan"), errors=["missing_plan"])
+        blocked = self._host_artifact_required_response(context, "tasks")
+        if blocked is not None:
+            return blocked
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
@@ -548,18 +656,15 @@ class StageRunner:
             task.fingerprint,
         )
         runtime_result = create_runtime_client(context.config.default_runtime).execute(context.request.cwd, task)
-        diff_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "diff.patch", runtime_result.diff)
-        stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stdout.log", runtime_result.stdout)
-        stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stderr.log", runtime_result.stderr)
-        context.store.add_runtime_ref(attempt_id, "diff", diff_ref)
-        context.store.add_runtime_ref(attempt_id, "stdout", stdout_ref)
-        context.store.add_runtime_ref(attempt_id, "stderr", stderr_ref)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", runtime_result.diff)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", runtime_result.stdout)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", runtime_result.stderr)
 
         verification_results = self.verifier.run(context.request.cwd, context.config.commands) if task.lane == "verify" else []
         verification_failed = False
         for index, result in enumerate(verification_results, start=1):
-            verify_stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, f"verify{index}.stdout.log", result.stdout)
-            verify_stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, f"verify{index}.stderr.log", result.stderr)
+            verify_stdout_ref = self._write_attempt_file_if_not_empty(context, task.task_id, attempt_no, f"verify{index}.stdout.log", result.stdout)
+            verify_stderr_ref = self._write_attempt_file_if_not_empty(context, task.task_id, attempt_no, f"verify{index}.stderr.log", result.stderr)
             context.store.record_verification(attempt_id, result.command, result.status, result.exit_code, verify_stdout_ref, verify_stderr_ref)
             if result.status == "failed":
                 verification_failed = True
@@ -652,15 +757,12 @@ class StageRunner:
         final_status = status
         summary = str(context.request.args.get("summary") or f"Host runtime completed {task.task_id}: {task.title}")
         diff = _collect_host_diff(context.request.cwd)
-        stdout = str(context.request.args.get("stdout") or summary)
+        stdout = str(context.request.args.get("stdout") or "")
         stderr = str(context.request.args.get("stderr") or "")
         attempt_no = int(attempt["attempt_no"])
-        diff_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "diff.patch", diff)
-        stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stdout.log", stdout)
-        stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stderr.log", stderr)
-        context.store.add_runtime_ref(attempt_id, "diff", diff_ref)
-        context.store.add_runtime_ref(attempt_id, "stdout", stdout_ref)
-        context.store.add_runtime_ref(attempt_id, "stderr", stderr_ref)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", diff)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", stdout)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", stderr)
         context.store.update_attempt(attempt_id, final_status, summary)
 
         if final_status in {"failed", "blocked"}:
@@ -703,6 +805,9 @@ class StageRunner:
         drift = self._drift_response(context, spec_hash, plan_hash)
         if drift is not None:
             return drift
+        blocked = self._host_artifact_required_response(context, "ship")
+        if blocked is not None:
+            return blocked
         tasks_content = context.artifacts.read("tasks") or ""
         tasks = parse_tasks(tasks_content)
         if tasks_hash:

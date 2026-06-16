@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import resources
 
-from codeloom.app.claude_plugin import _agent_rule, _content_rule
+from codeloom.app.claude_plugin import _agent_rule, _argument_rule, _content_rule
 
 
 
@@ -141,6 +141,205 @@ def test_stage_content_rule_uses_project_artifact_language():
     ):
         assert expected in prompt
 
+
+def test_artifact_stage_skill_prompt_eval_requires_host_handoff():
+    for command in ("spec", "plan", "tasks", "ship"):
+        prompt = _content_rule(command)
+        for expected in (
+            "stage main agent",
+            "before running the Kernel registration command",
+            "user-facing Markdown",
+            "Write the artifact directly",
+            "--arg artifact_file=specs/<branch-slug>/",
+            "do not run the Kernel artifact stage without `artifact_file`",
+        ):
+            assert expected in prompt
+
+
+def test_loom_spec_skill_prompt_eval_respec_argument_cases():
+    prompt = _argument_rule("spec")
+
+    for expected in (
+        "never pass bare user text",
+        "unsupported keys such as `gap`",
+        "no current `spec.md` exists",
+        "--arg requirement=<text>",
+        "current `spec.md` already exists",
+        "--arg revision_note=<text>",
+        "Preserve explicit `requirement=`, `revision_note=`, `text=`, or `artifact_file=`",
+    ):
+        assert expected in prompt
+
+
+def test_artifact_stage_skill_prompt_eval_routes_owner_questions_before_kernel():
+    for command in ("spec", "plan", "tasks", "ship"):
+        prompt = _agent_rule(command)
+
+        for expected in (
+            "owner-bearing uncertainty",
+            "use AskUserQuestion before running the Kernel stage",
+            "do not guess business semantics, risk acceptance, or long-term technical direction",
+        ):
+            assert expected in prompt
+
+
+def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
+    cases = (
+        PromptEvalCase(
+            name="spec_blocks_owner_bearing_requirement_ambiguity",
+            surface=_agent_prompt("spec-analyzer.md"),
+            badcase="spec agent guesses business semantics or acceptance criteria",
+            required_guardrails=(
+                "AskUserQuestion boundary",
+                "unclear business semantics",
+                "acceptance criteria",
+                "Do not ask for project conventions, local implementation choices",
+            ),
+        ),
+        PromptEvalCase(
+            name="plan_blocks_owner_bearing_technical_or_risk_choice",
+            surface=_agent_prompt("plan-architect.md"),
+            badcase="plan agent chooses architecture direction or production risk acceptance for the owner",
+            required_guardrails=(
+                "AskUserQuestion boundary",
+                "owner-bearing technical choices",
+                "architecture direction",
+                "production risk acceptance",
+            ),
+        ),
+        PromptEvalCase(
+            name="tasks_blocks_owner_bearing_slicing_decision",
+            surface=_agent_prompt("task-planner.md"),
+            badcase="task planner turns owner-bearing slicing uncertainty into executable tasks",
+            required_guardrails=(
+                "Owner-bearing decisions should be resolved with AskUserQuestion",
+                "missing facts are needed before safe slicing",
+                "Do not encode the fact-gathering work as a parseable task",
+            ),
+        ),
+        PromptEvalCase(
+            name="ship_blocks_missing_release_owner_decisions",
+            surface=_agent_prompt("release-analyzer.md"),
+            badcase="release analyzer guesses approval, timing, rollback ownership, or coordination",
+            required_guardrails=(
+                "AskUserQuestion boundary",
+                "missing owner approval",
+                "risk acceptance",
+                "release timing",
+                "rollback ownership",
+                "external deployment coordination",
+                "Do not guess those decisions",
+            ),
+        ),
+    )
+
+    for case in cases:
+        _assert_guardrails(case)
+
+
+def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
+    cases = (
+        PromptEvalCase(
+            name="reviewers_route_questions_to_main_agent",
+            surface="\n".join(
+                (
+                    _agent_prompt("spec-reviewer.md"),
+                    _agent_prompt("plan-reviewer.md"),
+                    _agent_prompt("task-reviewer.md"),
+                )
+            ),
+            badcase="reviewer directly asks the user instead of returning questions for the main agent",
+            required_guardrails=("Questions the main agent may need to ask",),
+        ),
+        PromptEvalCase(
+            name="builder_blocks_owner_decision_for_host",
+            surface=_agent_prompt("builder.md"),
+            badcase="builder asks the user directly or silently expands the task boundary",
+            required_guardrails=(
+                "Do not ask the user directly from this agent",
+                "owner-bearing decision that crosses the current task boundary",
+                "stop as blocked",
+                "exact question the host should ask via AskUserQuestion",
+                "smallest upstream artifact that needs revision",
+            ),
+        ),
+        PromptEvalCase(
+            name="code_reviewer_blocks_owner_decision_for_builder_or_host",
+            surface=_agent_prompt("code-reviewer.md"),
+            badcase="code reviewer turns product, contract, data, or risk decision into local review advice",
+            required_guardrails=(
+                "Do not ask the user directly",
+                "owner-bearing product, contract, data, or risk acceptance decisions",
+                "mark it as blocked",
+                "exact question for `builder` or the host to route through AskUserQuestion",
+                "Local code-quality recommendations should not become user questions",
+            ),
+        ),
+        PromptEvalCase(
+            name="verifier_distinguishes_missing_evidence_from_owner_decision",
+            surface=_agent_prompt("verifier.md"),
+            badcase="verifier guesses acceptance or risk when evidence is missing",
+            required_guardrails=(
+                "Do not ask the user directly from this agent",
+                "verification cannot proceed because evidence is missing",
+                "return blocked with the missing evidence",
+                "owner-bearing acceptance, risk, or release decision",
+                "exact question the host should ask via AskUserQuestion",
+                "classify the next upstream action",
+            ),
+        ),
+    )
+
+    for case in cases:
+        _assert_guardrails(case)
+
+
+def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
+    cases = (
+        PromptEvalCase(
+            name="builder_keeps_task_local_choices_local",
+            surface=_agent_prompt("builder.md"),
+            badcase="builder asks the user to choose a local implementation detail inside the task boundary",
+            required_guardrails=(
+                "When the task leaves local choices open",
+                "choose within the task boundary",
+                "Continue locally only for implementation choices inside the current task boundary",
+            ),
+        ),
+        PromptEvalCase(
+            name="code_reviewer_keeps_code_quality_advice_local",
+            surface=_agent_prompt("code-reviewer.md"),
+            badcase="code reviewer asks the user to decide normal maintainability or regression advice",
+            required_guardrails=(
+                "Check likely correctness, security, maintainability, and regression risks",
+                "Return findings to `builder` for absorption",
+                "Local code-quality recommendations should not become user questions",
+            ),
+        ),
+        PromptEvalCase(
+            name="verifier_missing_evidence_is_not_user_decision",
+            surface=_agent_prompt("verifier.md"),
+            badcase="verifier turns missing logs or validation output into a user decision",
+            required_guardrails=(
+                "if evidence is insufficient, return blocked with the missing evidence",
+                "verification cannot proceed because evidence is missing",
+                "return blocked with the missing evidence",
+            ),
+        ),
+        PromptEvalCase(
+            name="release_analyzer_does_not_create_extra_approval_system",
+            surface=_agent_prompt("release-analyzer.md"),
+            badcase="release analyzer asks for extra approval when evidence is sufficient",
+            required_guardrails=(
+                "Do not turn release analysis into a new review or approval system",
+                "Keep that blocked response outside `release.md`",
+                "Do not guess those decisions",
+            ),
+        ),
+    )
+
+    for case in cases:
+        _assert_guardrails(case)
 
 def test_builder_prompt_eval_good_cases():
     prompt = _agent_prompt("builder.md")

@@ -103,13 +103,17 @@ class SQLiteStore:
         with self.connect() as conn:
             existing = conn.execute(
                 """
-                SELECT id FROM artifact_revisions
+                SELECT id, based_on_spec_hash, based_on_plan_hash, based_on_tasks_hash FROM artifact_revisions
                 WHERE branch_session_id = ? AND kind = ? AND content_hash = ?
                 ORDER BY id DESC LIMIT 1
                 """,
                 (session_id, kind, content_hash),
             ).fetchone()
-            if existing:
+            if existing and (
+                existing["based_on_spec_hash"] == based_on_spec_hash
+                and existing["based_on_plan_hash"] == based_on_plan_hash
+                and existing["based_on_tasks_hash"] == based_on_tasks_hash
+            ):
                 return int(existing["id"])
             cursor = conn.execute(
                 """

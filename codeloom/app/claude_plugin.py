@@ -85,7 +85,7 @@ def _write(path: Path, content: str, force: bool) -> list[str]:
 
 
 def _skill_content(skill_name: str, command: str, description: str, argument_hint: str) -> str:
-    task_argument_rule = "- For the `do` stage, convert a bare task id like `T2` to `--arg task_id=T2`." if command == "do" else ""
+    argument_rule = _argument_rule(command)
     agent_rule = _agent_rule(command)
     content_rule = _content_rule(command)
     return f"""---
@@ -100,7 +100,7 @@ Run the CodeLoom `{command}` stage for the current project and current git branc
 
 User arguments are available as `$ARGUMENTS`. Convert them to `key=value` pairs when possible and pass them through as `--arg key=value`.
 
-Use the shell appropriate for the current platform to execute:
+After any host-agent work required by the rules below, use the shell appropriate for the current platform to execute:
 
 ```text
 loom stage {command} --branch <current-git-branch> [--arg key=value ...]
@@ -110,14 +110,25 @@ Rules:
 
 - Get the current branch from the host git context.
 - CodeLoom is a workflow harness over this host, not a replacement for Claude Code, Codex, or OpenCode.
-- Do not decide CodeLoom workflow state in the skill body.
-- Do not write artifacts or SQLite directly.
+- Do not decide CodeLoom workflow state in the skill body; Kernel owns workflow state and SQLite updates.
+- For artifact stages, write only the final user-facing Markdown artifact under `specs/<branch-slug>/...`; do not write runtime state or SQLite directly.
 - If required user input is unclear, ask before running the command.
 {agent_rule}
 {content_rule}
-{task_argument_rule}
+{argument_rule}
 - Report the returned KernelResponse status, message, recommended_next, recommended_task_id, artifact_paths, findings, and errors.
 """
+
+
+def _argument_rule(command: str) -> str:
+    if command == "spec":
+        return """- For the `spec` stage, never pass bare user text as an unnamed `--arg` and never invent unsupported keys such as `gap`.
+- If `$ARGUMENTS` is bare text and no current `spec.md` exists, pass it as `--arg requirement=<text>`.
+- If `$ARGUMENTS` is bare text and a current `spec.md` already exists, pass it as `--arg revision_note=<text>` so CodeLoom revises the existing spec.
+- Preserve explicit `requirement=`, `revision_note=`, `text=`, or `artifact_file=` keys when the user provides them."""
+    if command == "do":
+        return "- For the `do` stage, convert a bare task id like `T2` to `--arg task_id=T2`."
+    return ""
 
 
 def _agent_rule(command: str) -> str:
@@ -170,8 +181,8 @@ def _content_rule(command: str) -> str:
 - Before drafting, read `.loom/templates/{template_name}` if it exists and use it as the structure and governance for the Markdown artifact.
 - The template controls structure, but `.loom/project.yml` `specs.language` controls the artifact's prose language.
 - If the template is missing, draft a stage-appropriate Markdown artifact without blocking the Kernel.
-- Use the current host model to draft the Markdown artifact for this stage.
+- Use the current host model and the stage main agent to draft the Markdown artifact for this stage before running the Kernel registration command.
 - The artifact file must contain only user-facing Markdown. Do not include agent output contracts, process notes, execution rules, `result_type`, readiness flags, or SQLite/runtime instructions inside the Markdown.
 - Write the artifact directly to `specs/<branch-slug>/{artifact_name}`. Do not create a parallel temporary copy.
 - Use the same `<branch-slug>` CodeLoom uses for the current git branch; if unsure, read it from `loom status --branch <current-git-branch> --json`.
-- Pass the final artifact file to the Kernel with `--arg artifact_file=specs/<branch-slug>/{artifact_name}` so `loom stage` records artifact state without regenerating duplicate content.{task_format_rule}"""
+- Pass the final artifact file to the Kernel with `--arg artifact_file=specs/<branch-slug>/{artifact_name}`; do not run the Kernel artifact stage without `artifact_file` in `claude-code` host mode.{task_format_rule}"""

@@ -33,6 +33,11 @@ What has been proven, what remains risky, and how should it be shipped?
 
 Do not turn release analysis into a new review or approval system.
 
+# AskUserQuestion boundary
+
+If release readiness depends on missing owner approval, risk acceptance, release timing, rollback ownership, or external deployment coordination, return a blocked response with the specific questions the host should ask via AskUserQuestion. Do not guess those decisions and do not encode them inside `release.md`.
+
+
 # Blocked handling
 
 If delivery readiness cannot be stated safely, return a concise blocking reason and the missing verification, evidence, or release decision the host should resolve. Keep that blocked response outside `release.md`, and do not run the Kernel stage.
