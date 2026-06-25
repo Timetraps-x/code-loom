@@ -26,10 +26,10 @@ Organize by user or system impact, not just by files changed.
 
 ## 3. Completed Tasks
 
-| Task | Lane | Status | Evidence |
-|---|---|---|---|
-| T1 | build | verified / blocked / not_run | <Evidence path or note> |
-| T2 | verify | verified / blocked / not_run | <Evidence path or note> |
+| Task | Lane | Complexity | Status | Evidence |
+|---|---|---|---|---|
+| T1 | build | small | implemented / blocked / not_run | <Evidence path or note> |
+| T2 | verify | non-trivial | verified / blocked / not_verified / not_run | <Evidence path or note> |
 
 ## 4. Verification Summary
 
@@ -40,6 +40,11 @@ Summarize verification results without inventing verification that was not run.
 | AC-1 | PASS / BLOCKED / NOT_RUN / N/A | <Evidence> |
 | AC-2 | PASS / BLOCKED / NOT_RUN / N/A | <Evidence> |
 
+### 4.1 Not Verified
+
+| Item | Reason | Required Decision / Next Action |
+|---|---|---|
+| <Item or N/A> | <Reason> | <Action> |
 ## 5. Release Preconditions
 
 If release actions are not involved, write `N/A because ...`.
@@ -62,6 +67,14 @@ If not involved, write `N/A because ...`.
 |---|---|---|---|
 | <config key> | <value> | before release / after deploy / rollback | <Notes> |
 
+## 6.1 Change Inventory
+
+| Kind | Paths / Evidence | Notes |
+|---|---|---|
+| Code | <runtime ref or N/A> | <Notes> |
+| SQL / Data | <runtime ref or N/A> | <Notes> |
+| Configuration / Permissions | <runtime ref or N/A> | <Notes> |
+| UI / Menu | <runtime ref or N/A> | <Notes> |
 ## 7. SQL / Data Changes
 
 If not involved, write `N/A because ...`.
@@ -98,11 +111,13 @@ Describe how to revert if release fails. If automatic rollback is not possible, 
 |---|---|---|
 | <Risk> | <Observed signal> | <Response> |
 
-## 11. Known Gaps
+## 11. Known Gaps and Accepted Risks
 
-| Gap | Blocking | Decision |
-|---|---|---|
-| <Gap> | yes / no | <Handling decision> |
+Risks can be accepted only when the user or release owner explicitly accepted them. Do not infer acceptance from missing evidence.
+
+| Gap / Risk | Blocking | Accepted By | Decision |
+|---|---|---|---|
+| <Gap or risk> | yes / no | <Owner or N/A> | <Handling decision> |
 
 ## 12. Not Automatically Reversible
 

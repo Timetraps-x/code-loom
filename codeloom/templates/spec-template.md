@@ -42,6 +42,16 @@ Describe the user request, the current problem, and the context that triggered t
 
 Every AC must describe an observable and verifiable outcome. Do not write only "support", "optimize", "improve", or "complete a capability" without concrete evidence.
 
+### 6.1 Observable Success
+
+- <User-visible or system-visible success behavior>
+
+### 6.2 Observable Failure
+
+- <Expected failure behavior or error exposure; write N/A if not relevant>
+
+### 6.3 Acceptance Table
+
 | ID | Acceptance Criteria | Verification Hint |
 |---|---|---|
 | AC-1 | <Verifiable result> | <Page/API/command/data check> |

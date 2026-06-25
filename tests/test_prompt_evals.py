@@ -29,18 +29,25 @@ def test_spec_prompt_eval_good_and_bad_cases():
     reviewer = _agent_prompt("spec-reviewer.md")
 
     for expected in (
-        "observable acceptance criteria",
-        "support, optimize, improve, or complete without concrete evidence",
-        "Which facts are observed, which are inferred",
-        "owner-bearing decisions cannot be guessed",
+        "Observable acceptance criteria and verification hints",
+        "Do not convert vague words such as `support`, `optimize`, `improve`, or `complete` into specific behavior without evidence",
+        "Separate known facts, safe inferences, and owner decisions to confirm",
+        "Do not treat inferred facts as known facts",
+        "Do not hide owner decisions inside requirements",
+        "Do not leave a question open if it can be resolved from current evidence",
+        "Do not push owner-bearing requirement decisions into planning",
+        "Hand it off to `plan-architect` only when it does not change spec correctness",
     ):
         assert expected in analyzer
 
     for expected in (
-        "observable and executable",
-        "support, optimize, improve, or complete without concrete evidence",
-        "Owner-bearing questions are not hidden",
+        "bounded specialist reviewer supporting `spec-analyzer`",
+        "Produce findings, evidence, uncertainty, and impact",
+        "Observable acceptance criteria and verification hints",
+        "Vague verbs such as `support`, `optimize`, `improve`, or `complete` are not used without concrete evidence",
         "Technical solution details do not replace requirement meaning",
+        "Do not turn missing evidence into a positive claim",
+        "Questions the main agent may need to ask",
     ):
         assert expected in reviewer
 
@@ -51,11 +58,12 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
     task_reviewer = _agent_prompt("task-reviewer.md")
 
     for expected in (
-        "without owning task slicing",
-        "writing task slicing rationale",
-        "creating builder instructions",
-        "defining do-stage execution boundaries",
-        "Design facts written in the existing plan section where they belong",
+        "You own the system design facts captured in `plan.md`",
+        "without redefining requirements",
+        "Do not write task slicing rationale",
+        "do-stage boundaries",
+        "Do not delegate architecture direction",
+        "Explicit task-planning readiness",
     ):
         assert expected in plan
 
@@ -70,21 +78,27 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         assert phrase not in plan
 
     for expected in (
-        "You own execution slicing",
-        "design facts distributed across `plan.md` sections",
+        "You own the translation from `plan.md` design facts",
+        "Every executable task must be either",
         "Do not copy large plan sections",
-        "micromanage function names, local variables, or line-level edits",
-        "Do extract enough execution context",
-        "builder`, `code-reviewer`, and `verifier` can execute or review the current task without rereading the whole plan",
+        "Do not micromanage function names, local variables, line-level edits",
+        "Do extract enough execution context from `plan.md`",
+        "without rereading the whole plan",
+        "checklist-adjacent metadata",
+        "Do not rely on Delivery Map, section headings, or Task Notes to provide Kernel metadata",
+        "Task List metadata is the runtime source of truth",
     ):
         assert expected in task_planner
 
     for expected in (
-        "Plan design facts that affect execution are projected",
-        "Tasks do not copy large plan sections",
-        "micromanage function names, local variables, line-level edits",
-        "Tasks provide enough execution context",
-        "without rereading the whole plan",
+        "bounded specialist reviewer supporting `task-planner`",
+        "only build or verify tasks",
+        "Grouped verification is allowed",
+        "every parseable task line has immediate `Lane` and `Complexity` metadata",
+        "Kernel routing may call the wrong agent",
+        "without copying large plan sections",
+        "micromanaging function names, local variables, line-level edits",
+        "Questions the main agent may need to ask",
     ):
         assert expected in task_reviewer
 
@@ -190,10 +204,12 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
             surface=_agent_prompt("spec-analyzer.md"),
             badcase="spec agent guesses business semantics or acceptance criteria",
             required_guardrails=(
-                "AskUserQuestion boundary",
-                "unclear business semantics",
+                "bounded clarification",
+                "requirement ownership",
                 "acceptance criteria",
-                "Do not ask for project conventions, local implementation choices",
+                "public contract meaning",
+                "data meaning",
+                "hard risk decision",
             ),
         ),
         PromptEvalCase(
@@ -201,7 +217,7 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
             surface=_agent_prompt("plan-architect.md"),
             badcase="plan agent chooses architecture direction or production risk acceptance for the owner",
             required_guardrails=(
-                "AskUserQuestion boundary",
+                "bounded clarification",
                 "owner-bearing technical choices",
                 "architecture direction",
                 "production risk acceptance",
@@ -214,7 +230,7 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
             required_guardrails=(
                 "Owner-bearing decisions should be resolved with AskUserQuestion",
                 "missing facts are needed before safe slicing",
-                "Do not encode the fact-gathering work as a parseable task",
+                "Do not encode fact-gathering work as a parseable task",
             ),
         ),
         PromptEvalCase(
@@ -222,13 +238,13 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
             surface=_agent_prompt("release-analyzer.md"),
             badcase="release analyzer guesses approval, timing, rollback ownership, or coordination",
             required_guardrails=(
-                "AskUserQuestion boundary",
+                "bounded clarification",
                 "missing owner approval",
                 "risk acceptance",
                 "release timing",
                 "rollback ownership",
                 "external deployment coordination",
-                "Do not guess those decisions",
+                "Do not guess missing owner decisions",
             ),
         ),
     )
@@ -285,7 +301,7 @@ def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
                 "return blocked with the missing evidence",
                 "owner-bearing acceptance, risk, or release decision",
                 "exact question the host should ask via AskUserQuestion",
-                "classify the next upstream action",
+                "smallest evidence or upstream artifact gap",
             ),
         ),
     )
@@ -332,8 +348,8 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
             badcase="release analyzer asks for extra approval when evidence is sufficient",
             required_guardrails=(
                 "Do not turn release analysis into a new review or approval system",
-                "Keep that blocked response outside `release.md`",
-                "Do not guess those decisions",
+                "Do not ask for extra approval when evidence is sufficient",
+                "Do not guess missing owner decisions",
             ),
         ),
     )
@@ -485,11 +501,14 @@ def test_verifier_and_scout_prompt_eval_boundary_cases():
         assert expected in verifier
 
     for expected in (
-        "Answer one bounded factual question",
+        "Answer only the delegated factual question",
         "then stop",
-        "External open-source, technical, or domain consensus for one local choice",
-        "Do not",
-        "Decide the final requirement, design, task split",
+        "bounded specialist evidence agent supporting a CodeLoom main agent",
+        "codebase mode",
+        "external mode",
+        "Do not decide the final requirement, design, task split",
+        "Do not turn missing evidence into a positive claim",
+        "If the delegated scope is insufficient",
     ):
         assert expected in scout
 
@@ -509,3 +528,123 @@ def test_prompt_eval_rejects_old_smallest_implementation_bias():
     for surface_name, surface in surfaces.items():
         for phrase in forbidden:
             assert phrase not in surface, f"{surface_name} still contains biased phrase: {phrase}"
+
+
+def test_coding_goal_prompt_guardrails_cover_bad_cases():
+    builder = _agent_prompt("builder.md")
+    reviewer = _agent_prompt("code-reviewer.md")
+    verifier = _agent_prompt("verifier.md")
+    release = _agent_prompt("release-analyzer.md")
+    task_planner = _agent_prompt("task-planner.md")
+    plan_architect = _agent_prompt("plan-architect.md")
+    codebase_scout = _agent_prompt("codebase-scout.md")
+
+    for expected in (
+        "current task as the direct execution boundary",
+        "Keep the main business flow readable",
+        "reasonable content density",
+        "artificial short methods",
+        "repeated `collectXxx(...)` helper traversals",
+        "stable reusable capability",
+        "one-off pages, buttons, tasks",
+        "concise behavior names",
+        "full assertion, scenario sentence, or cause-effect explanation",
+        "Do not add null checks, fallback branches, helpers, managers, adapters, or wrappers",
+        "real boundary, business state, or current complexity reduction",
+        "Return implementation evidence without claiming full verification",
+    ):
+        assert expected in builder
+
+    for expected in (
+        "codebase-scout",
+        "narrow read-only repository facts inside the current task boundary",
+        "generic `scout` only when artifact/runtime/external evidence is needed",
+    ):
+        assert expected in builder
+
+    for expected in (
+        "readability_risk",
+        "content_density_risk",
+        "invariant_risk",
+        "over_abstraction",
+        "cosmetic_extraction",
+        "repeated_traversal",
+        "n_plus_one_query",
+        "query_naming_risk",
+        "full-sentence method or test names",
+        "concise behavior names",
+        "meaningless_defense",
+        "evidence_integrity_gap",
+    ):
+        assert expected in reviewer
+
+    for expected in (
+        "verified / failed / blocked / not verified",
+        "No evidence means not verified",
+        "Do not broaden verification to the whole plan",
+        "status: verified | failed | blocked",
+        "not_verified | not_applicable",
+        "not workflow routing authority",
+        "next_action_hint",
+    ):
+        assert expected in verifier
+
+    for expected in (
+        "codebase-scout",
+        "relevant tests, assertions, code paths, or existing verification conventions inside the current task boundary",
+        "Do not broaden verification to the whole plan",
+    ):
+        assert expected in verifier
+
+    for expected in (
+        "bounded specialist codebase evidence agent supporting a CodeLoom do-stage main agent",
+        "Answer only the delegated codebase fact question",
+        "reusable data-access capabilities",
+        "SQL/query naming conventions",
+        "visible N+1 or repeated-query risks",
+        "Do not run commands",
+        "Do not decide verification status",
+        "Do not decide task status",
+        "Do not broaden the current task boundary",
+        "Do not push uncertainty to `builder`, `verifier`, or later stages as if it were resolved evidence",
+    ):
+        assert expected in codebase_scout
+
+    for expected in (
+        "runtime evidence refs",
+        "not-verified items",
+        "Do not invent evidence",
+        "risk acceptance",
+        "produce a blocked or partial `release.md`",
+        "readiness blockers",
+        "you do not own the actual release decision",
+    ):
+        assert expected in release
+
+    for expected in (
+        "complexity",
+        "verify task",
+        "build task",
+        "coding-quality constraints",
+        "verification coverage map",
+        "grouped verification changes verification coverage, not build task granularity",
+        "do not merge build tasks merely because they share a grouped verify task",
+        "full verify task set collectively covers requested behavior and material impacted regression surfaces",
+        "stable reusable capability",
+        "one-off business scenarios",
+        "without rereading the whole plan",
+        "do not make those the default task boundary",
+        "checklist-adjacent metadata",
+        "Task Notes are agent/human context only",
+    ):
+        assert expected in task_planner
+
+    for expected in (
+        "Main business flow readability",
+        "visible business/data flow",
+        "real boundary, reuse pressure, or current complexity reduction",
+        "real complexity isolation",
+        "stable capability names",
+        "only when touched by the requirement or observed system facts",
+    ):
+        assert expected in plan_architect

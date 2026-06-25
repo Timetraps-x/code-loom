@@ -42,7 +42,7 @@ STAGE_RESPONSIBILITIES = {
     "spec": "requirement semantics",
     "plan": "system design",
     "tasks": "execution slicing",
-    "ship": "delivery confirmation",
+    "ship": "delivery readiness",
 }
 
 STAGE_PROJECTIONS = {
@@ -140,7 +140,10 @@ def _agent_rule(command: str) -> str:
 - `builder` may use `spec.md` or `plan.md` only when the task references a specific section or explicit pointer, when task context is ambiguous, or when implementation reveals a conflict with requirement semantics or design facts.
 - When local choices are open, `builder` may choose within the task boundary by considering existing-code consistency, correctness, performance, maintainability, change cost, and verification cost.
 - If execution would require changing requirement semantics, public contracts, data model semantics, major UI flow, preserved design constraints, or later task boundaries, complete the attempt as `blocked` instead of expanding the task.
-- `builder` may delegate narrow codebase fact gathering or external research to `scout` when available, but `scout` must stay read-only and advisory.
+- `builder` and `verifier` may delegate narrow read-only repository fact questions inside the current task boundary to `codebase-scout` from `.claude/agents/codebase-scout.md` when available.
+- Use generic `scout` only when artifact/runtime/external evidence is needed and `codebase-scout` is too narrow; both scouts must stay advisory and must not decide task status.
+- `builder` should preserve reasonable content density: keep key business/data flow, side effects, transaction boundaries, batch/query behavior, and performance-sensitive paths visible at the useful reading level.
+- `builder` and `code-reviewer` should reject cosmetic helper extraction, repeated traversal, N+1 queries, and reusable SQL/query/helper names tied to one-off pages, buttons, tasks, or temporary scenarios.
 - After file modifications, `builder` must use the project Claude Code agent `code-reviewer` from `.claude/agents/code-reviewer.md` when available before closing the build attempt.
 - Complete the attempt by running `loom stage do --branch <current-git-branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=<implemented|verified|failed|blocked> --arg summary=<short-summary>`.
 - Build attempts must complete as `implemented`, `failed`, or `blocked`; they must not claim full verification.

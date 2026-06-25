@@ -70,6 +70,7 @@ DEFAULT_AGENT_NAMES = (
     "release-analyzer.md",
     "code-reviewer.md",
     "scout.md",
+    "codebase-scout.md",
     "spec-reviewer.md",
     "plan-reviewer.md",
     "task-reviewer.md",

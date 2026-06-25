@@ -60,6 +60,7 @@ def test_removed_task_supersedes_old_attempt(tmp_path):
     original_tasks = parse_tasks(tasks_path.read_text(encoding="utf-8"))
     assert original_tasks[0].task_id == "T1"
     tasks_path.write_text("# Tasks\n\n- [ ] T2: Verify current CodeLoom requirement\n", encoding="utf-8")
+    write_project_config(repo, test_command="python --version")
     response = run_stage(repo, "do")
 
     assert response.status == "ok"

@@ -12,6 +12,7 @@ class TaskDefinition:
     raw: str
     fingerprint: str
     lane: str = "build"
+    complexity: str = "small"
 
 
 def branch_slug(branch_name: str) -> str:
@@ -24,6 +25,7 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
     tasks: list[TaskDefinition] = []
     lines = content.splitlines()
     task_pattern = re.compile(r"^\s*-\s*\[[ xX]\]\s*(T\d+)\s*:\s*(.+?)\s*$")
+    top_level_section_pattern = re.compile(r"^\s*##\s+")
     current_lane: str | None = None
     index = 0
     while index < len(lines):
@@ -36,13 +38,27 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
 
         task_id, title = match.groups()
         block_end = index + 1
-        while block_end < len(lines) and not task_pattern.match(lines[block_end]):
+        while (
+            block_end < len(lines)
+            and not task_pattern.match(lines[block_end])
+            and not top_level_section_pattern.match(lines[block_end])
+        ):
             block_end += 1
 
         raw = "\n".join(lines[index:block_end]).strip()
         lane = _block_lane(lines[index + 1 : block_end]) or current_lane or _title_lane(title)
-        fingerprint = hashlib.sha256(f"{raw}\nLane: {lane}".encode("utf-8")).hexdigest()
-        tasks.append(TaskDefinition(task_id=task_id, title=title, raw=raw, fingerprint=fingerprint, lane=lane))
+        complexity = _block_complexity(lines[index + 1 : block_end])
+        fingerprint = hashlib.sha256(f"{raw}\nLane: {lane}\nComplexity: {complexity}".encode("utf-8")).hexdigest()
+        tasks.append(
+            TaskDefinition(
+                task_id=task_id,
+                title=title,
+                raw=raw,
+                fingerprint=fingerprint,
+                lane=lane,
+                complexity=complexity,
+            )
+        )
         index = block_end
     return tasks
 
@@ -59,6 +75,15 @@ def _block_lane(lines: list[str]) -> str | None:
         if match:
             return match.group(1).lower()
     return None
+
+
+def _block_complexity(lines: list[str]) -> str:
+    pattern = re.compile(r"^\s*-?\s*Complexity\s*:\s*(trivial|small|non-trivial)\b", re.IGNORECASE)
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            return match.group(1).lower()
+    return "small"
 
 
 def _title_lane(title: str) -> str:

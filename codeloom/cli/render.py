@@ -108,7 +108,11 @@ def render_status(data: dict[str, Any]) -> str:
     for attempt in attempts:
         summary = attempt.get("summary") or ""
         suffix = f" - {summary}" if summary else ""
-        lines.append(f"  - {attempt.get('task_id')} a{attempt.get('attempt_no')}: {attempt.get('status')}{suffix}")
+        lane = attempt.get("lane") or "?"
+        complexity = attempt.get("complexity") or "?"
+        lines.append(
+            f"  - {attempt.get('task_id')} [{lane}/{complexity}] a{attempt.get('attempt_no')}: {attempt.get('status')}{suffix}"
+        )
 
     if data.get("errors"):
         lines.append("Errors:")
