@@ -18,8 +18,8 @@ ship   release.md 交付结论
 
 - `spec.md` 描述需求语义和可观察的验收标准。
 - `plan.md` 描述设计事实、约束、风险和验证策略，不负责 do 阶段任务拆分。
-- `tasks.md` 将 plan 中的设计事实投影为可执行的 build / verify 任务边界。
-- `do` 只执行当前 task，并把 runtime 输出、diff 和验证结果记录到 SQLite / `.loom/runs/`。
+- `tasks.md` 将 plan 中的设计事实投影为可执行的 build / verify 任务边界，并用 Verification Coverage Map 覆盖当前需求和关键回归面。
+- `do` 只执行当前 task，并把 runtime 输出、diff、git status 快照和验证证据记录到 SQLite / `.loom/runs/`。
 - `ship` 生成 `release.md`，汇总完成情况、证据和剩余风险。
 
 ## 项目布局
@@ -78,7 +78,7 @@ uv run loom --help
 从 Git tag 安装：
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.4
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.3.0
 loom --help
 ```
 
@@ -96,15 +96,18 @@ uv tool install --editable <repo-path>
 loom init
 ```
 
-然后按阶段推进：
+然后按 artifact 阶段和 host-runtime do handoff 推进：
 
 ```powershell
-loom stage spec --branch <branch>
-loom stage plan --branch <branch>
-loom stage tasks --branch <branch>
-loom stage do --branch <branch> --arg task_id=T1
-loom stage ship --branch <branch>
+loom stage spec --branch <branch> --arg artifact_file=specs/<branch>/spec.md
+loom stage plan --branch <branch> --arg artifact_file=specs/<branch>/plan.md
+loom stage tasks --branch <branch> --arg artifact_file=specs/<branch>/tasks.md
+loom stage do --branch <branch> --arg task_id=T1 --arg action=begin
+loom stage do --branch <branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=implemented --arg summary=<summary>
+loom stage ship --branch <branch> --arg artifact_file=specs/<branch>/release.md
 ```
+
+verify task 只有在有验证证据时才能 complete 为 `status=verified`。较长或容易被 shell quoting 破坏的验证摘要，可以用 `--arg verification_summary_file=<path>` 传文件，而不是内联 JSON。
 
 常用辅助命令：
 
@@ -134,11 +137,12 @@ loom doctor
 当前版本重点支持 Python CLI + Claude Code 集成：
 
 - 普通 `loom init` 会生成 `.loom/project.yml`，并设置 `runtime.default: claude-code`。
-- 生成的配置中，`claude-code` 使用 `mode: host`：由当前 Claude Code 会话通过 begin/complete handoff 执行 task，而不是再启动嵌套的 `claude -p` 进程。
+- 生成的配置中，`claude-code` 使用 `mode: host`：由当前 Claude Code 会话通过显式 `action=begin` / `action=complete` handoff 执行 task，而不是再启动嵌套的 `claude -p` 进程。
 - `mock` runtime 保留给测试和显式 fallback 初始化，不作为正常 do 阶段 runtime。
-- build task 成功后记录为 `implemented`。
-- verify task 成功后记录为 `verified`。
-- runtime 失败、验证失败或阻塞会记录为 `failed` 并保留 evidence。
+- build task 成功后记录为 `implemented`；verify task 成功后记录为 `verified`。
+- verify task 必须有 evidence；缺少 evidence 的 `verified` claim 会被降级为 `blocked`。
+- blocked attempt 可以显式 retry 同一个 task，不需要改 `tasks.md`；有 open blocking finding 时，其他 task 仍会被阻塞。
+- do-attempt evidence 包含 diff、change inventory、带 `cwd` 的 git status begin/complete 快照，以及可选的 `verification_summary` / `verification_summary_file` 内容。
 - do 阶段使用当前 task 作为直接执行边界；只有 task 指向、上下文不清或发现冲突时，才回读 `spec.md` / `plan.md`。
 
 ## 验证

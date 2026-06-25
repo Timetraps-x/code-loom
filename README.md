@@ -20,8 +20,8 @@ Core principles:
 
 - `spec.md` describes requirement semantics and observable acceptance criteria.
 - `plan.md` describes design facts, constraints, risks, and verification strategy; it does not define do-stage task slicing.
-- `tasks.md` projects plan design facts into executable build / verify task boundaries.
-- `do` executes only the current task and records runtime output, diffs, and verification results in SQLite / `.loom/runs/`.
+- `tasks.md` projects plan design facts into executable build / verify task boundaries, plus a verification coverage map for requested behavior and material regression surfaces.
+- `do` executes only the current task and records runtime output, diffs, git status snapshots, and verification evidence in SQLite / `.loom/runs/`.
 - `ship` generates `release.md` with completed work, evidence, and remaining risk.
 
 ## Project Layout
@@ -80,7 +80,7 @@ uv run loom --help
 Install from a Git tag:
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.2.4
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.3.0
 loom --help
 ```
 
@@ -98,15 +98,18 @@ Initialize Claude Code integration in the target project. `loom init` defaults t
 loom init
 ```
 
-Then move through the stages:
+Then move through artifact stages and the host-runtime do handoff:
 
 ```powershell
-loom stage spec --branch <branch>
-loom stage plan --branch <branch>
-loom stage tasks --branch <branch>
-loom stage do --branch <branch> --arg task_id=T1
-loom stage ship --branch <branch>
+loom stage spec --branch <branch> --arg artifact_file=specs/<branch>/spec.md
+loom stage plan --branch <branch> --arg artifact_file=specs/<branch>/plan.md
+loom stage tasks --branch <branch> --arg artifact_file=specs/<branch>/tasks.md
+loom stage do --branch <branch> --arg task_id=T1 --arg action=begin
+loom stage do --branch <branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=implemented --arg summary=<summary>
+loom stage ship --branch <branch> --arg artifact_file=specs/<branch>/release.md
 ```
+
+For verify tasks, complete with `status=verified` only when verification evidence exists. Large or shell-sensitive summaries can be passed with `--arg verification_summary_file=<path>` instead of inline JSON.
 
 Common helper commands:
 
@@ -136,11 +139,12 @@ These commands draft clean Markdown artifacts and pass them to the CodeLoom Kern
 The current release focuses on the Python CLI + Claude Code integration:
 
 - A normal `loom init` creates `.loom/project.yml` with `runtime.default: claude-code`.
-- In generated config, `claude-code` uses `mode: host`: the current Claude Code session runs the task via begin/complete handoff instead of launching a nested `claude -p` process.
+- In generated config, `claude-code` uses `mode: host`: the current Claude Code session runs each task with explicit `action=begin` / `action=complete` handoff instead of launching a nested `claude -p` process.
 - The `mock` runtime remains available for tests and explicit fallback initialization, but it is not the normal do-stage runtime.
-- Successful build tasks are recorded as `implemented`.
-- Successful verify tasks are recorded as `verified`.
-- Runtime failures, verification failures, and blocking findings are recorded with evidence.
+- Successful build tasks are recorded as `implemented`; successful verify tasks are recorded as `verified`.
+- Verify tasks require evidence. Missing evidence downgrades a claimed `verified` completion to `blocked`.
+- Blocked attempts can be retried explicitly for the same task without editing `tasks.md`; unrelated tasks remain blocked while a blocking finding is open.
+- do-attempt evidence includes diffs, change inventory, git status begin/complete snapshots with `cwd`, and optional `verification_summary` / `verification_summary_file` content.
 - The do stage treats the current task as the direct execution boundary. It only rereads `spec.md` / `plan.md` when the task points there, context is ambiguous, or implementation reveals a conflict.
 
 ## Verification
