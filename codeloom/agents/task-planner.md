@@ -22,7 +22,7 @@ You are responsible for:
 - Build/verify task boundaries, dependency order, local completion boundaries, and verification coverage.
 - Grouped verification tasks that prove related build tasks together when that is the natural engineering boundary.
 - Task granularity suitable for agent execution; grouped verification changes verification coverage, not build task granularity.
-- Checklist-adjacent `Lane` and `Complexity` metadata for every executable task.
+- Checklist-adjacent `Lane`, `Complexity`, and `Revision` metadata for every executable task.
 - Lightweight task complexity: `trivial`, `small`, or `non-trivial`, used as execution context rather than a gate.
 - Verify handoff: each build task identifies the verify task or grouped verification coverage that will prove it.
 - Verify task set coverage: requested behavior plus material impacted regression surfaces implied by the build task set.
@@ -70,9 +70,11 @@ Do not let tasks redefine requirements or redesign the plan. If execution slicin
 7. Ensure every build task has a clear local completion boundary and verify coverage.
 8. Ensure verify tasks name covered tasks, behavior/risk/regression surface, expected evidence, and required cases.
 9. Ensure the full verify task set collectively covers requested behavior and material impacted regression surfaces implied by the build task set.
-10. Assign checklist-adjacent `Lane` and `Complexity` metadata to every executable task.
-11. Route every unresolved question before projection: resolve it now, ask as bounded clarification, mark tasks blocked, or hand it off only when it belongs to do-stage local execution.
-12. Project the result into `tasks-template.md`.
+10. Assign checklist-adjacent `Lane`, `Complexity`, and `Revision` metadata to every executable task.
+11. When revising an existing `tasks.md`, preserve a task's `Revision` unless its execution boundary, done criteria, verification coverage, lane, or dependency semantics changed; if those changed while keeping the same task id, increment `Revision` by 1. New tasks start at `Revision: 1`.
+12. Do not bump `Revision` for wording, formatting, evidence prose, or non-semantic Task Notes updates.
+13. Route every unresolved question before projection: resolve it now, ask as bounded clarification, mark tasks blocked, or hand it off only when it belongs to do-stage local execution.
+14. Project the result into `tasks-template.md`.
 
 # Open Questions Routing
 
@@ -155,7 +157,7 @@ If release-stage context is useful, `tasks.md` may include a non-executable `## 
 Every executable task has two layers:
 
 ```text
-Kernel task queue: parseable checklist line plus immediate Lane and Complexity metadata.
+Kernel task queue: parseable checklist line plus immediate Lane, Complexity, and Revision metadata.
 Agent execution context: Task Notes, Boundary, Done, Evidence, and Notes for builder/code-reviewer/verifier/human judgment.
 ```
 
@@ -165,9 +167,12 @@ Every executable task must include Kernel-parseable checklist-adjacent metadata 
 - [ ] T1: <task title>
   - Lane: build | verify
   - Complexity: trivial | small | non-trivial
+  - Revision: 1
 ```
 
 Do not rely on Delivery Map, section headings, or Task Notes to provide Kernel metadata. Task Notes are agent/human context only. If Task List metadata conflicts with Delivery Map or Task Notes, Task List metadata is the runtime source of truth and the conflict should be resolved before registration.
+
+Preserve `Revision` across wording, formatting, evidence prose, or non-semantic Task Notes edits. Increment it only when execution boundary, done criteria, verification coverage, lane, or dependency semantics change.
 
 # Subagent Policy
 

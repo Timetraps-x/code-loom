@@ -10,7 +10,10 @@ based_on_plan_hash: `<plan-hash>`
 > - [ ] T1: <task title>
 >   - Lane: build | verify
 >   - Complexity: trivial | small | non-trivial
+>   - Revision: 1
 > ```
+>
+> `Revision` changes only when this task's execution boundary, done criteria, verification coverage, lane, or dependency semantics change. Keep it unchanged for wording, formatting, evidence prose, or non-semantic Task Notes updates.
 >
 > `Task Notes` are for agents and humans. Do not rely on `Task Notes` to provide Kernel metadata. If Task List metadata and Task Notes conflict, Task List metadata is the runtime source of truth.
 
@@ -58,16 +61,18 @@ If there are no dependencies, write `Execute in Task List order`.
 - [ ] T1: <task title, outcome-oriented>
   - Lane: build
   - Complexity: small
+  - Revision: 1
 
 - [ ] T2: <task title, outcome-oriented>
   - Lane: verify
   - Complexity: small
+  - Revision: 1
 
 ## 7. Task Notes
 
 ### T1: <task title>
 
-- Runtime metadata: see `## 6. Task List` for Lane and Complexity.
+- Runtime metadata: see `## 6. Task List` for Lane, Complexity, and Revision.
 - From plan: §<section> (reference source sections only; do not copy large plan text; put execution-critical design facts in Boundary / Done / Notes)
 - Acceptance: AC-<id> / N/A
 - Depends on: None / Tn
@@ -108,7 +113,7 @@ Forbidden:
 
 ### T2: <task title>
 
-- Runtime metadata: see `## 6. Task List` for Lane and Complexity.
+- Runtime metadata: see `## 6. Task List` for Lane, Complexity, and Revision.
 - From plan: §<section> (reference source sections only; do not copy large plan text; put execution-critical design facts in Boundary / Done / Notes)
 - Acceptance: AC-<id> / N/A
 - Depends on: None / Tn
@@ -145,8 +150,9 @@ Forbidden:
 ## 8. Global Notes
 
 - `plan.md` remains the design truth source; `tasks.md` only slices execution. Do not copy plan text, but do extract the design facts, constraints, invariants, contracts, risks, and verification requirements needed for do-stage execution.
-- Checklist tasks and their immediate `Lane` / `Complexity` metadata are the Kernel runtime interface; Task Notes are execution context, not the runtime source of truth.
-- `Complexity` is a lightweight execution hint and stale-attempt signal, not a gate. Use `small` when uncertain.
+- Checklist tasks and their immediate `Lane` / `Complexity` / `Revision` metadata are the Kernel runtime interface; Task Notes are execution context, not the runtime source of truth.
+- `Complexity` is a lightweight execution hint, not a gate. Use `small` when uncertain.
+- `Revision` is the explicit execution-contract version. Increment it only when the task's execution boundary, done criteria, verification coverage, lane, or dependency semantics change.
 - Executable `Tn` tasks use only the `build` or `verify` lane.
 - Build tasks must describe boundaries, dependencies, stopping points, and verification coverage. Every build task must have a clear `Covered by: Tn` or grouped verify task, but each build task does not need independent full functional acceptance.
 - Verification Coverage Map is agent/human context, not Kernel metadata; it maps the full verify task set to requested behavior and material impacted regression surfaces without changing build task granularity.

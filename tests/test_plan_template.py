@@ -92,6 +92,9 @@ def test_tasks_template_declares_kernel_metadata_contract():
         "- [ ] T1: <task title>",
         "  - Lane: build | verify",
         "  - Complexity: trivial | small | non-trivial",
+        "  - Revision: 1",
+        "execution boundary, done criteria, verification coverage, lane, or dependency semantics",
+        "Keep it unchanged for wording, formatting, evidence prose, or non-semantic Task Notes updates",
         "Task Notes` are for agents and humans",
         "Task List metadata is the runtime source of truth",
     ):

@@ -87,6 +87,9 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         "checklist-adjacent metadata",
         "Do not rely on Delivery Map, section headings, or Task Notes to provide Kernel metadata",
         "Task List metadata is the runtime source of truth",
+        "`Lane`, `Complexity`, and `Revision` metadata",
+        "preserve a task's `Revision` unless",
+        "Do not bump `Revision`",
     ):
         assert expected in task_planner
 
@@ -94,8 +97,9 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         "bounded specialist reviewer supporting `task-planner`",
         "only build or verify tasks",
         "Grouped verification is allowed",
-        "every parseable task line has immediate `Lane` and `Complexity` metadata",
+        "every parseable task line has immediate `Lane`, `Complexity`, and `Revision` metadata",
         "Kernel routing may call the wrong agent",
+        "preserve `Revision` unless execution boundary",
         "without copying large plan sections",
         "micromanaging function names, local variables, line-level edits",
         "Questions the main agent may need to ask",
@@ -135,6 +139,18 @@ def test_loom_tasks_skill_prompt_eval_assignment_cases():
             required_guardrails=(
                 "multiple naturally related build tasks",
                 "covered tasks, risks, and expected evidence",
+            ),
+        ),
+        PromptEvalCase(
+            name="tasks_maintains_revision_metadata",
+            surface=prompt,
+            badcase="tasks stage rewrites task notes but forgets to preserve or bump Revision",
+            required_guardrails=(
+                "`Lane`, `Complexity`, and `Revision`",
+                "New tasks start at `Revision: 1`",
+                "preserve a task's `Revision` unless",
+                "increment `Revision` by 1",
+                "Do not bump `Revision`",
             ),
         ),
     )
@@ -485,6 +501,8 @@ def test_loom_do_skill_prompt_eval_host_handoff_cases():
         "status=<implemented|verified|failed|blocked>",
         "Build attempts must complete as `implemented`, `failed`, or `blocked`",
         "Verify attempts must complete as `verified`, `failed`, or `blocked`",
+        "put the verification evidence summary in `summary`",
+        "verification_summary_file=<path>",
     ):
         assert expected in prompt
 

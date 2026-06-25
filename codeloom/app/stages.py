@@ -260,7 +260,6 @@ class StageRunner:
             return NextRecommendation(_loom_command("tasks"))
 
         self._record_task_snapshots(context, tasks_content, tasks_hash)
-        self._supersede_stale_task_state(context, tasks)
         blocking = self._open_execution_blocking_findings(context)
         if blocking:
             return self._recommend_from_blocking_findings(context, blocking)
@@ -369,22 +368,6 @@ class StageRunner:
             return NextRecommendation(_loom_command("ship"))
         return NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
 
-    def _supersede_stale_task_state(self, context: StageContext, tasks: list[TaskDefinition]) -> None:
-        session_id = int(context.session["id"])
-        current = {task.task_id: task for task in tasks}
-        for attempt in context.store.attempts(session_id):
-            if attempt.get("status") == "superseded":
-                continue
-            task = current.get(str(attempt.get("task_id")))
-            fingerprint = attempt.get("task_fingerprint")
-            if task is None:
-                attempt_id = int(attempt["id"])
-                context.store.supersede_attempt(attempt_id, "task no longer exists in tasks.md")
-                context.store.supersede_open_findings_for_attempt(attempt_id)
-            elif fingerprint is not None and fingerprint != task.fingerprint:
-                attempt_id = int(attempt["id"])
-                context.store.supersede_attempt(attempt_id, "task definition changed")
-                context.store.supersede_open_findings_for_attempt(attempt_id)
 
     def _host_artifact_required_response(self, context: StageContext, kind: str) -> KernelResponse | None:
         if context.config.default_runtime != "claude-code" or context.request.args.get("artifact_file"):
@@ -642,7 +625,6 @@ class StageRunner:
         if not tasks:
             return KernelResponse(status="failed", message="no tasks found", recommended_next=_loom_command("tasks"), errors=["no_tasks"])
         self._record_task_snapshots(context, tasks_content, tasks_hash)
-        self._supersede_stale_task_state(context, tasks)
 
         action = str(context.request.args.get("action") or "").strip().lower()
         if action == "complete":
@@ -823,6 +805,14 @@ class StageRunner:
         task = next((item for item in tasks if item.task_id == attempt.get("task_id")), None)
         if task is None:
             return KernelResponse(status="failed", message=f"task not found for attempt: {attempt.get('task_id')}", recommended_next=_loom_command("tasks"), errors=["task_not_found"])
+        if attempt.get("task_fingerprint") != task.fingerprint:
+            return KernelResponse(
+                status="failed",
+                message=f"task definition changed during attempt: {task.task_id}",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["task_changed_during_attempt"],
+            )
 
         status = str(context.request.args.get("status") or "").strip().lower()
         if status == "success":
@@ -842,6 +832,10 @@ class StageRunner:
         verification_summary, verification_summary_error = self._verification_summary_content(context, task)
         if verification_summary_error is not None:
             return verification_summary_error
+        if task.lane == "verify" and final_status == "verified" and not verification_summary.strip():
+            explicit_summary = str(context.request.args.get("summary") or "")
+            if explicit_summary.strip():
+                verification_summary = explicit_summary
         diff = _collect_host_diff(context.request.cwd)
         stdout = str(context.request.args.get("stdout") or "")
         stderr = str(context.request.args.get("stderr") or "")
@@ -928,7 +922,6 @@ class StageRunner:
         tasks = parse_tasks(tasks_content)
         if tasks_hash:
             self._record_task_snapshots(context, tasks_content, tasks_hash)
-        self._supersede_stale_task_state(context, tasks)
         blocking = context.store.open_blocking_findings(session_id)
         attempts = context.store.attempts(session_id)
         completed_tasks = []

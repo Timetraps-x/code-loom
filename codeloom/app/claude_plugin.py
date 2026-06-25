@@ -147,7 +147,7 @@ def _agent_rule(command: str) -> str:
 - After file modifications, `builder` must use the project Claude Code agent `code-reviewer` from `.claude/agents/code-reviewer.md` when available before closing the build attempt.
 - Complete the attempt by running `loom stage do --branch <current-git-branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=<implemented|verified|failed|blocked> --arg summary=<short-summary>`.
 - Build attempts must complete as `implemented`, `failed`, or `blocked`; they must not claim full verification.
-- Verify attempts must complete as `verified`, `failed`, or `blocked` with evidence from the verifier."""
+- Verify attempts must complete as `verified`, `failed`, or `blocked` with evidence from the verifier; when completing a verify attempt as `verified`, put the verification evidence summary in `summary` or pass `verification_summary_file=<path>`."""
     agent_name = STAGE_MAIN_AGENTS.get(command)
     if not agent_name:
         return ""
@@ -178,7 +178,20 @@ def _content_rule(command: str) -> str:
     task_format_rule = ""
     template_name = "release-template.md" if command == "ship" else f"{command}-template.md"
     if command == "tasks":
-        task_format_rule = "\n- Executable tasks must be build or verify tasks only; do not create scout, research, discovery, adjustment, planning, release, ship, rollback-summary, or shippability-judgment `Tn` items.\n- Build tasks need boundaries, dependencies, local completion boundaries, and verification coverage, but they do not each need independent functional verification.\n- Every build task must have a clear verification owner or grouped verify task.\n- Verify tasks may cover multiple naturally related build tasks and must name the covered tasks, risks, and expected evidence.\n- Do not copy large plan sections into tasks or micromanage function names, local variables, or line-level edits.\n- Extract enough execution context from plan design facts that builder, code-reviewer, and verifier can execute or review the current task without rereading the whole plan.\n- Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked; only non-blocking known constraints, risk notes, and validation notes belong in task context.\n- Optional `## Ship inputs` content is non-executable and must not contain `- [ ] Tn:` checklist lines.\n- The artifact must contain parseable task lines exactly like `- [ ] T1: <task title>`. Do not use only section headings for tasks."
+        task_format_rule = (
+            "\n- Executable tasks must be build or verify tasks only; do not create scout, research, discovery, adjustment, planning, release, ship, rollback-summary, or shippability-judgment `Tn` items."
+            "\n- Every executable task line must include immediate metadata: `Lane`, `Complexity`, and `Revision`. New tasks start at `Revision: 1`."
+            "\n- When updating an existing `tasks.md`, preserve a task's `Revision` unless its execution boundary, done criteria, verification coverage, lane, or dependency semantics changed; if those changed while keeping the same task id, increment `Revision` by 1."
+            "\n- Do not bump `Revision` for wording, formatting, evidence prose, or non-semantic Task Notes updates."
+            "\n- Build tasks need boundaries, dependencies, local completion boundaries, and verification coverage, but they do not each need independent functional verification."
+            "\n- Every build task must have a clear verification owner or grouped verify task."
+            "\n- Verify tasks may cover multiple naturally related build tasks and must name the covered tasks, risks, and expected evidence."
+            "\n- Do not copy large plan sections into tasks or micromanage function names, local variables, or line-level edits."
+            "\n- Extract enough execution context from plan design facts that builder, code-reviewer, and verifier can execute or review the current task without rereading the whole plan."
+            "\n- Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked; only non-blocking known constraints, risk notes, and validation notes belong in task context."
+            "\n- Optional `## Ship inputs` content is non-executable and must not contain `- [ ] Tn:` checklist lines."
+            "\n- The artifact must contain parseable task lines exactly like `- [ ] T1: <task title>`. Do not use only section headings for tasks."
+        )
     artifact_name = "release.md" if command == "ship" else f"{command}.md"
     return f"""- Before drafting, read `.loom/project.yml` and use `specs.language` as the artifact content language for `specs/<branch-slug>/{artifact_name}`; default to English (`en`) when it is missing or unclear.
 - Before drafting, read `.loom/templates/{template_name}` if it exists and use it as the structure and governance for the Markdown artifact.

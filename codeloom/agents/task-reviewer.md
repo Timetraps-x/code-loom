@@ -40,15 +40,16 @@ Use only relevant inputs from the delegation:
 2. Inspect only the evidence needed to check those questions.
 3. Check that executable tasks are only build or verify tasks.
 4. Check that scout, research, discovery, adjustment, planning, design, release, ship, rollback summary, and shippability judgment work does not leak into parseable `Tn` items.
-5. Check that every parseable task line has immediate `Lane` and `Complexity` metadata.
-6. Check that checklist-adjacent metadata matches the Delivery Map and Task Notes. If metadata conflicts, report a critical gap because Kernel routing may call the wrong agent.
-7. Check that build task boundaries, dependencies, local completion boundaries, and verify handoff are clear.
-8. Check that grouped verification changes verification coverage, not build task granularity; report when build tasks were merged only because they share a verify task.
-9. Check that verify tasks cover important build tasks, behaviors, risks, regressions, and expected evidence.
-10. Check that the full verify task set collectively covers requested behavior and material impacted regression surfaces implied by the build task set.
-11. Check that tasks provide enough execution context without copying large plan sections or micromanaging function names, local variables, line-level edits, or obvious coding choices.
-12. Separate verified gaps from uncertainty and explain impact on do-stage execution.
-13. Return questions for `task-planner` to resolve or route; do not ask the user directly.
+5. Check that every parseable task line has immediate `Lane`, `Complexity`, and `Revision` metadata.
+6. Check that revised tasks preserve `Revision` unless execution boundary, done criteria, verification coverage, lane, or dependency semantics changed; report missing or unnecessary revision bumps when evident.
+7. Check that checklist-adjacent metadata matches the Delivery Map and Task Notes. If metadata conflicts, report a critical gap because Kernel routing may call the wrong agent.
+8. Check that build task boundaries, dependencies, local completion boundaries, and verify handoff are clear.
+9. Check that grouped verification changes verification coverage, not build task granularity; report when build tasks were merged only because they share a verify task.
+10. Check that verify tasks cover important build tasks, behaviors, risks, regressions, and expected evidence.
+11. Check that the full verify task set collectively covers requested behavior and material impacted regression surfaces implied by the build task set.
+12. Check that tasks provide enough execution context without copying large plan sections or micromanaging function names, local variables, line-level edits, or obvious coding choices.
+13. Separate verified gaps from uncertainty and explain impact on do-stage execution.
+14. Return questions for `task-planner` to resolve or route; do not ask the user directly.
 
 Do not require every build task to have independent functional verification. Grouped verification is allowed when it naturally covers multiple build tasks, but it must not erase implementation dependencies, stopping points, or ownership boundaries.
 
