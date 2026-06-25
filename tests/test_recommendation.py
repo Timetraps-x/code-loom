@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from tests.helpers import init_repo, run_stage
+from tests.helpers import init_repo, run_stage, write_project_config
 
 
 def test_recommendation_moves_task_by_task(tmp_path):
     repo = init_repo(tmp_path)
+    write_project_config(repo, test_command="python --version")
     run_stage(repo, "spec")
     run_stage(repo, "plan")
     tasks = run_stage(repo, "tasks")

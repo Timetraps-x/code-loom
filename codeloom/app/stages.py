@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +40,18 @@ class NextRecommendation:
 def _loom_command(command: str) -> str:
     return f"/loom-{command}"
 
+ARTIFACT_STAGE_MAIN_AGENTS = {
+    "spec": "spec-analyzer",
+    "plan": "plan-architect",
+    "tasks": "task-planner",
+    "ship": "release-analyzer",
+}
+
+ARTIFACT_STAGE_REVIEWERS = {
+    "spec": "spec-reviewer",
+    "plan": "plan-reviewer",
+    "tasks": "task-reviewer",
+}
 
 def _normalize_command(command: str) -> str:
     if command.startswith("/loom-"):
@@ -258,6 +273,34 @@ class StageRunner:
     def _recommended_do(self, task_id: str) -> str:
         return f"{_loom_command('do')} {task_id}"
 
+    def _write_runtime_ref(
+        self,
+        context: StageContext,
+        attempt_id: int,
+        task_id: str,
+        attempt_no: int,
+        kind: str,
+        filename_kind: str,
+        content: str,
+    ) -> str | None:
+        ref = self._write_attempt_file_if_not_empty(context, task_id, attempt_no, filename_kind, content)
+        if ref is not None:
+            context.store.add_runtime_ref(attempt_id, kind, ref, _content_hash(context.request.cwd / ref))
+        return ref
+
+    def _write_attempt_file_if_not_empty(
+        self,
+        context: StageContext,
+        task_id: str,
+        attempt_no: int,
+        filename_kind: str,
+        content: str,
+    ) -> str | None:
+        if not content.strip():
+            return None
+        return context.evidence.write_attempt_file(task_id, attempt_no, filename_kind, content)
+
+
     def _open_execution_blocking_findings(self, context: StageContext) -> list[dict[str, Any]]:
         session_id = int(context.session["id"])
         return [
@@ -292,6 +335,40 @@ class StageRunner:
                 return NextRecommendation(command, task_id)
         return NextRecommendation(None)
 
+    def _blocking_allows_explicit_retry(
+        self,
+        context: StageContext,
+        findings: list[dict[str, Any]],
+        requested_task_id: str | None,
+    ) -> bool:
+        if not requested_task_id or not findings:
+            return False
+        for finding in findings:
+            recommendation = self._recommend_from_blocking_findings(context, [finding])
+            if recommendation.task_id != requested_task_id:
+                return False
+        return True
+
+    def _supersede_open_findings_for_task(
+        self,
+        context: StageContext,
+        findings: list[dict[str, Any]],
+        task_id: str,
+    ) -> None:
+        for finding in findings:
+            recommendation = self._recommend_from_blocking_findings(context, [finding])
+            if recommendation.task_id != task_id:
+                continue
+            attempt_id = finding.get("attempt_id")
+            if attempt_id is not None:
+                context.store.supersede_open_findings_for_attempt(int(attempt_id))
+
+    def _next_task_recommendation(self, context: StageContext, tasks: list[TaskDefinition]) -> NextRecommendation:
+        next_task = self._select_recommended_task(context, tasks)
+        if next_task is None:
+            return NextRecommendation(_loom_command("ship"))
+        return NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+
     def _supersede_stale_task_state(self, context: StageContext, tasks: list[TaskDefinition]) -> None:
         session_id = int(context.session["id"])
         current = {task.task_id: task for task in tasks}
@@ -308,6 +385,29 @@ class StageRunner:
                 attempt_id = int(attempt["id"])
                 context.store.supersede_attempt(attempt_id, "task definition changed")
                 context.store.supersede_open_findings_for_attempt(attempt_id)
+
+    def _host_artifact_required_response(self, context: StageContext, kind: str) -> KernelResponse | None:
+        if context.config.default_runtime != "claude-code" or context.request.args.get("artifact_file"):
+            return None
+
+        artifact_path = context.artifacts.relative(context.artifacts.path_for(kind))
+        command = _loom_command("ship" if kind == "ship" else kind)
+        register_command = f"loom stage {kind} --branch {context.request.branch_name} --arg artifact_file={artifact_path}"
+        return KernelResponse(
+            status="blocked",
+            message=f"{kind} requires a host-authored artifact_file in claude-code mode",
+            recommended_next=command,
+            artifact_paths=[artifact_path],
+            errors=["host_artifact_required"],
+            extras={
+                "stage": kind,
+                "main_agent": ARTIFACT_STAGE_MAIN_AGENTS[kind],
+                "reviewer_agent": ARTIFACT_STAGE_REVIEWERS.get(kind),
+                "artifact_path": artifact_path,
+                "register_command": register_command,
+            },
+        )
+
 
     def _artifact_content(
         self,
@@ -334,10 +434,75 @@ class StageRunner:
             )
         return resolved_path.read_text(encoding="utf-8"), None
 
-    def _run_spec(self, context: StageContext) -> KernelResponse:
+    def _verification_summary_content(self, context: StageContext, task: TaskDefinition) -> tuple[str, KernelResponse | None]:
+        summary_file = context.request.args.get("verification_summary_file")
+        if summary_file:
+            path = Path(str(summary_file))
+            if not path.is_absolute():
+                path = context.request.cwd / path
+            if not path.exists():
+                return "", KernelResponse(
+                    status="failed",
+                    message=f"verification_summary_file not found: {path}",
+                    recommended_next=self._recommended_do(task.task_id),
+                    recommended_task_id=task.task_id,
+                    errors=["missing_verification_summary_file"],
+                )
+            try:
+                return path.read_text(encoding="utf-8"), None
+            except OSError as exc:
+                return "", KernelResponse(
+                    status="failed",
+                    message=f"verification_summary_file cannot be read: {path}: {exc}",
+                    recommended_next=self._recommended_do(task.task_id),
+                    recommended_task_id=task.task_id,
+                    errors=["invalid_verification_summary_file"],
+                )
+        return str(context.request.args.get("verification_summary") or ""), None
+
+    def _spec_fallback_input(self, context: StageContext) -> tuple[str, str | None]:
         args = context.request.args
-        requirement = str(args.get("requirement") or args.get("revision_note") or args.get("text") or "")
-        existing = context.artifacts.read("spec") if args.get("revision_note") else None
+        revision_note = str(args.get("revision_note") or "")
+        if revision_note:
+            return revision_note, context.artifacts.read("spec")
+
+        requirement = str(args.get("requirement") or "")
+        if requirement:
+            return requirement, None
+
+        text = str(args.get("text") or "")
+        if text:
+            return text, context.artifacts.read("spec")
+
+        freeform = self._freeform_spec_arg(args)
+        if freeform:
+            return freeform, context.artifacts.read("spec")
+
+        return "", None
+
+    def _freeform_spec_arg(self, args: dict[str, str]) -> str:
+        known = {"artifact_file", "requirement", "revision_note", "text"}
+        bare_parts: list[str] = []
+        gap: str | None = None
+        for key, value in args.items():
+            if key in known:
+                continue
+            if value:
+                if key == "gap":
+                    gap = str(value)
+                continue
+            bare_parts.append(str(key))
+
+        if bare_parts:
+            return " ".join(part.strip() for part in bare_parts if part.strip())
+        return gap or ""
+
+
+    def _run_spec(self, context: StageContext) -> KernelResponse:
+        blocked = self._host_artifact_required_response(context, "spec")
+        if blocked is not None:
+            return blocked
+        requirement, existing = self._spec_fallback_input(context)
         content, error = self._artifact_content(
             context,
             "spec",
@@ -368,6 +533,9 @@ class StageRunner:
         if spec is None:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         spec_hash = context.artifacts.hash_existing("spec")
+        blocked = self._host_artifact_required_response(context, "plan")
+        if blocked is not None:
+            return blocked
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
         content, error = self._artifact_content(
             context,
@@ -402,6 +570,9 @@ class StageRunner:
             return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
         if plan is None:
             return KernelResponse(status="failed", message="plan.md is required", recommended_next=_loom_command("plan"), errors=["missing_plan"])
+        blocked = self._host_artifact_required_response(context, "tasks")
+        if blocked is not None:
+            return blocked
         spec_hash = context.artifacts.hash_existing("spec")
         plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
@@ -473,8 +644,16 @@ class StageRunner:
         self._record_task_snapshots(context, tasks_content, tasks_hash)
         self._supersede_stale_task_state(context, tasks)
 
+        action = str(context.request.args.get("action") or "").strip().lower()
+        if action == "complete":
+            return self._run_do_complete(context, tasks, session_id)
+        if action and action != "begin":
+            return KernelResponse(status="failed", message=f"unsupported do action: {action}", recommended_next=_loom_command("do"), errors=["unsupported_do_action"])
+
+        requested_task_id = str(context.request.args.get("task_id") or "").strip() or None
         blocking = self._open_execution_blocking_findings(context)
-        if blocking:
+        explicit_retry = action == "begin" or context.config.default_runtime != "claude-code"
+        if blocking and not (explicit_retry and self._blocking_allows_explicit_retry(context, blocking, requested_task_id)):
             recommendation = self._recommend_from_blocking_findings(context, blocking)
             return KernelResponse(
                 status="blocked",
@@ -495,13 +674,55 @@ class StageRunner:
         latest_attempt = context.store.latest_attempt(session_id, task.task_id)
         decision = self.resolver.resolve(task, latest_snapshot, latest_attempt, False)
         if decision.action == "verified":
-            return KernelResponse(status="ok", message=decision.message, recommended_next=decision.recommended_next)
+            recommendation = self._next_task_recommendation(context, tasks)
+            return KernelResponse(status="ok", message=decision.message, recommended_next=recommendation.command, recommended_task_id=recommendation.task_id)
         if decision.action in {"blocked", "superseded"}:
             return KernelResponse(status="blocked", message=decision.message, recommended_next=decision.recommended_next)
+        if action == "begin":
+            if latest_attempt and latest_attempt.get("status") == "running" and latest_attempt.get("task_fingerprint") == task.fingerprint:
+                return self._do_begin_response(task, int(latest_attempt["id"]), int(latest_attempt["attempt_no"]))
+            if latest_attempt and decision.action in {"retry", "reattempt"}:
+                context.store.supersede_open_findings_for_attempt(int(latest_attempt["id"]))
+            else:
+                self._supersede_open_findings_for_task(context, blocking, task.task_id)
+            attempt_no = context.store.next_attempt_no(session_id, task.task_id)
+            attempt_id = context.store.create_attempt(
+                session_id,
+                task.task_id,
+                attempt_no,
+                context.config.default_runtime,
+                spec_hash,
+                plan_hash,
+                tasks_hash,
+                task.fingerprint,
+            )
+            self._write_runtime_ref(
+                context,
+                attempt_id,
+                task.task_id,
+                attempt_no,
+                "git_status_begin",
+                "git-status-begin.json",
+                _collect_host_git_status_snapshot(context.request.cwd, task.task_id, attempt_no, "begin"),
+            )
+            return self._do_begin_response(task, attempt_id, attempt_no)
+
+        if context.config.default_runtime == "claude-code":
+            return KernelResponse(
+                status="blocked",
+                message="claude-code host runtime requires do action=begin and action=complete",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras={"task_id": task.task_id, "lane": task.lane, "complexity": task.complexity, "main_agent": _do_main_agent(task.lane)},
+                errors=["host_runtime_requires_begin_complete"],
+            )
+
         if latest_attempt and latest_attempt.get("status") == "running":
             context.store.update_attempt(int(latest_attempt["id"]), "abandoned", "abandoned during recovery")
         elif latest_attempt and decision.action in {"retry", "reattempt"}:
             context.store.supersede_open_findings_for_attempt(int(latest_attempt["id"]))
+        else:
+            self._supersede_open_findings_for_task(context, blocking, task.task_id)
 
         attempt_no = context.store.next_attempt_no(session_id, task.task_id)
         attempt_id = context.store.create_attempt(
@@ -515,36 +736,35 @@ class StageRunner:
             task.fingerprint,
         )
         runtime_result = create_runtime_client(context.config.default_runtime).execute(context.request.cwd, task)
-        diff_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "diff.patch", runtime_result.diff)
-        stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stdout.log", runtime_result.stdout)
-        stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, "runtime.stderr.log", runtime_result.stderr)
-        context.store.add_runtime_ref(attempt_id, "diff", diff_ref)
-        context.store.add_runtime_ref(attempt_id, "stdout", stdout_ref)
-        context.store.add_runtime_ref(attempt_id, "stderr", stderr_ref)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", runtime_result.diff)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", runtime_result.stdout)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", runtime_result.stderr)
 
         verification_results = self.verifier.run(context.request.cwd, context.config.commands) if task.lane == "verify" else []
         verification_failed = False
         for index, result in enumerate(verification_results, start=1):
-            verify_stdout_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, f"verify{index}.stdout.log", result.stdout)
-            verify_stderr_ref = context.evidence.write_attempt_file(task.task_id, attempt_no, f"verify{index}.stderr.log", result.stderr)
+            verify_stdout_ref = self._write_attempt_file_if_not_empty(context, task.task_id, attempt_no, f"verify{index}.stdout.log", result.stdout)
+            verify_stderr_ref = self._write_attempt_file_if_not_empty(context, task.task_id, attempt_no, f"verify{index}.stderr.log", result.stderr)
             context.store.record_verification(attempt_id, result.command, result.status, result.exit_code, verify_stdout_ref, verify_stderr_ref)
             if result.status == "failed":
                 verification_failed = True
 
         status = attempt_status(task.lane, runtime_result.success, verification_failed)
+        if task.lane == "verify" and status == "verified" and not any(result.status == "passed" for result in verification_results):
+            status = "blocked"
         context.store.update_attempt(attempt_id, status, runtime_result.summary)
         if status == "verified":
             context.store.resolve_open_findings_for_attempt(attempt_id, "verification_failure")
-        if status == "failed":
+        if status in {"failed", "blocked"}:
             context.store.add_finding(
                 session_id,
                 attempt_id,
-                "verification_failure",
+                "verification_gap" if status == "blocked" else "verification_failure",
                 "blocking",
-                f"do attempt failed for {task.task_id}",
+                f"do attempt {status} for {task.task_id}",
                 _loom_command("do"),
             )
-        if status == "failed":
+        if status in {"failed", "blocked"}:
             recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
         else:
             next_task = self._select_recommended_task(context, tasks)
@@ -559,11 +779,139 @@ class StageRunner:
             recommended_task_id=recommendation.task_id,
         )
         return KernelResponse(
-            status="ok" if status != "failed" else "failed",
+            status="ok" if status in {"implemented", "verified"} else status,
             message=runtime_result.summary,
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
         )
+
+    def _do_begin_response(self, task: TaskDefinition, attempt_id: int, attempt_no: int) -> KernelResponse:
+        return KernelResponse(
+            status="ok",
+            message="do attempt started",
+            recommended_next=self._recommended_do(task.task_id),
+            recommended_task_id=task.task_id,
+            extras={
+                "attempt_id": attempt_id,
+                "attempt_no": attempt_no,
+                "task_id": task.task_id,
+                "task_title": task.title,
+                "lane": task.lane,
+                "complexity": task.complexity,
+                "main_agent": _do_main_agent(task.lane),
+                "reviewer_agent": "code-reviewer" if task.lane == "build" else None,
+                "task_definition": task.raw,
+            },
+        )
+
+    def _run_do_complete(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
+        attempt_id_value = context.request.args.get("attempt_id")
+        if attempt_id_value is None:
+            return KernelResponse(status="failed", message="attempt_id is required for do complete", recommended_next=_loom_command("do"), errors=["missing_attempt_id"])
+        try:
+            attempt_id = int(str(attempt_id_value))
+        except ValueError:
+            return KernelResponse(status="failed", message=f"invalid attempt_id: {attempt_id_value}", recommended_next=_loom_command("do"), errors=["invalid_attempt_id"])
+
+        attempt = context.store.attempt(attempt_id)
+        if attempt is None:
+            return KernelResponse(status="failed", message=f"attempt not found: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_found"])
+        if int(attempt["branch_session_id"]) != session_id:
+            return KernelResponse(status="failed", message=f"attempt does not belong to this branch session: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_session_mismatch"])
+        if attempt.get("status") != "running":
+            return KernelResponse(status="failed", message=f"attempt is not running: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_running"])
+        task = next((item for item in tasks if item.task_id == attempt.get("task_id")), None)
+        if task is None:
+            return KernelResponse(status="failed", message=f"task not found for attempt: {attempt.get('task_id')}", recommended_next=_loom_command("tasks"), errors=["task_not_found"])
+
+        status = str(context.request.args.get("status") or "").strip().lower()
+        if status == "success":
+            status = "verified" if task.lane == "verify" else "implemented"
+        expected_success = "verified" if task.lane == "verify" else "implemented"
+        if status not in {expected_success, "failed", "blocked"}:
+            return KernelResponse(
+                status="failed",
+                message=f"invalid completion status for {task.lane} task: {status}",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["invalid_completion_status"],
+            )
+
+        final_status = status
+        summary = str(context.request.args.get("summary") or f"Host runtime completed {task.task_id}: {task.title}")
+        verification_summary, verification_summary_error = self._verification_summary_content(context, task)
+        if verification_summary_error is not None:
+            return verification_summary_error
+        diff = _collect_host_diff(context.request.cwd)
+        stdout = str(context.request.args.get("stdout") or "")
+        stderr = str(context.request.args.get("stderr") or "")
+        attempt_no = int(attempt["attempt_no"])
+        self._write_runtime_ref(
+            context,
+            attempt_id,
+            task.task_id,
+            attempt_no,
+            "git_status_complete",
+            "git-status-complete.json",
+            _collect_host_git_status_snapshot(context.request.cwd, task.task_id, attempt_no, "complete"),
+        )
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", diff)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", stdout)
+        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", stderr)
+        self._write_runtime_ref(
+            context,
+            attempt_id,
+            task.task_id,
+            attempt_no,
+            "change_inventory",
+            "change-inventory.json",
+            _collect_host_change_inventory(context.request.cwd, task.task_id, attempt_no),
+        )
+        self._write_runtime_ref(
+            context,
+            attempt_id,
+            task.task_id,
+            attempt_no,
+            "verification_summary",
+            "verification-summary.json",
+            verification_summary,
+        )
+        if task.lane == "verify" and final_status == "verified" and not self._has_verification_evidence(context, attempt_id):
+            final_status = "blocked"
+            summary = f"{summary}\nMissing verification evidence for {task.task_id}"
+        context.store.update_attempt(attempt_id, final_status, summary)
+
+        if final_status in {"failed", "blocked"}:
+            context.store.add_finding(
+                session_id,
+                attempt_id,
+                "verification_failure" if final_status == "failed" else "execution_blocked",
+                "blocking",
+                f"do attempt {final_status} for {task.task_id}",
+                _loom_command("do"),
+            )
+            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
+        else:
+            if final_status == "verified":
+                context.store.resolve_open_findings_for_attempt(attempt_id, "verification_failure")
+            next_task = self._select_recommended_task(context, tasks)
+            recommendation = NextRecommendation(_loom_command("ship")) if next_task is None else NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+
+        context.store.update_branch_session(
+            session_id,
+            active_stage="do",
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+        )
+        response_status = "ok" if final_status in {"implemented", "verified"} else final_status
+        return KernelResponse(
+            status=response_status,
+            message=summary,
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+            extras={"attempt_id": attempt_id, "task_id": task.task_id, "status": final_status},
+        )
+
 
     def _run_ship(self, context: StageContext) -> KernelResponse:
         session_id = int(context.session["id"])
@@ -573,6 +921,9 @@ class StageRunner:
         drift = self._drift_response(context, spec_hash, plan_hash)
         if drift is not None:
             return drift
+        blocked = self._host_artifact_required_response(context, "ship")
+        if blocked is not None:
+            return blocked
         tasks_content = context.artifacts.read("tasks") or ""
         tasks = parse_tasks(tasks_content)
         if tasks_hash:
@@ -581,26 +932,62 @@ class StageRunner:
         blocking = context.store.open_blocking_findings(session_id)
         attempts = context.store.attempts(session_id)
         completed_tasks = []
+        task_facts = []
         runtime_refs = []
+        readiness_blockers = [finding["message"] for finding in blocking]
         verification_warnings = []
         for task in tasks:
             latest = context.store.latest_attempt(session_id, task.task_id)
-            if latest and self._task_completed(task, latest):
-                completed_tasks.append(task.task_id)
-                attempt_id = int(latest["id"])
-                runtime_refs.extend(ref["path"] for ref in context.store.runtime_refs(attempt_id))
-                if task.lane == "verify" and any(item["status"] == "skipped_config_missing" for item in context.store.verifications_for_attempt(attempt_id)):
-                    verification_warnings.append(f"{task.task_id}: verification command missing")
+            completed = bool(latest and self._task_completed(task, latest))
+            task_facts.append(
+                {
+                    "task_id": task.task_id,
+                    "title": task.title,
+                    "lane": task.lane,
+                    "complexity": task.complexity,
+                    "fingerprint": task.fingerprint,
+                    "completed": completed,
+                    "latest_attempt_id": latest.get("id") if latest else None,
+                    "latest_attempt_no": latest.get("attempt_no") if latest else None,
+                    "latest_status": latest.get("status") if latest else None,
+                }
+            )
+            if not completed:
+                readiness_blockers.append(f"{task.task_id}: task not completed")
+                continue
+
+            completed_tasks.append(task.task_id)
+            attempt_id = int(latest["id"])
+            refs = self._structured_runtime_refs(context, latest)
+            runtime_refs.extend(refs)
+            for gap in _runtime_ref_integrity_gaps(context.request.cwd, refs):
+                readiness_blockers.append(f"{task.task_id}: {gap}")
+                context.store.add_finding(
+                    session_id,
+                    attempt_id,
+                    "evidence_integrity_gap",
+                    "blocking",
+                    f"{task.task_id}: {gap}",
+                    _loom_command("ship"),
+                )
+            if task.lane == "verify" and not self._has_verification_evidence(context, attempt_id):
+                verification_warnings.append(f"{task.task_id}: verification evidence missing")
+                readiness_blockers.append(f"{task.task_id}: verification evidence missing")
+            elif task.lane == "verify" and any(item["status"] == "skipped_config_missing" for item in context.store.verifications_for_attempt(attempt_id)):
+                verification_warnings.append(f"{task.task_id}: verification command missing")
+                readiness_blockers.append(f"{task.task_id}: verification command missing")
         all_completed = bool(tasks) and len(completed_tasks) == len(tasks)
-        ship_status = "shippable" if all_completed and not blocking else "blocked"
+        ship_status = "shippable" if all_completed and not readiness_blockers else "blocked"
         facts = {
             "status": ship_status,
             "spec_hash": spec_hash or "",
             "plan_hash": plan_hash or "",
             "tasks_hash": tasks_hash or "",
+            "tasks": task_facts,
             "completed_tasks": completed_tasks,
             "verification_summary": self._verification_summary(len(completed_tasks), len(tasks), verification_warnings),
             "open_findings": [finding["message"] for finding in blocking],
+            "readiness_blockers": readiness_blockers,
             "runtime_refs": runtime_refs,
             "attempt_count": len(attempts),
         }
@@ -642,6 +1029,26 @@ class StageRunner:
             summary += "\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
         return summary
 
+    def _has_verification_evidence(self, context: StageContext, attempt_id: int) -> bool:
+        refs = context.store.runtime_refs(attempt_id)
+        if any(ref.get("kind") == "verification_summary" for ref in refs):
+            return True
+        return any(item.get("status") == "passed" for item in context.store.verifications_for_attempt(attempt_id))
+
+    def _structured_runtime_refs(self, context: StageContext, attempt: dict[str, Any]) -> list[dict[str, Any]]:
+        attempt_id = int(attempt["id"])
+        return [
+            {
+                "task_id": attempt.get("task_id"),
+                "attempt_no": attempt.get("attempt_no"),
+                "kind": ref.get("kind"),
+                "path": ref.get("path"),
+                "content_hash": ref.get("content_hash"),
+                "created_at": ref.get("created_at"),
+            }
+            for ref in context.store.runtime_refs(attempt_id)
+        ]
+
     def _task_completed(self, task: TaskDefinition, attempt: dict[str, Any]) -> bool:
         status = attempt.get("status")
         if task.lane == "verify":
@@ -674,3 +1081,117 @@ class StageRunner:
                     return task
             return None
         return self._select_recommended_task(context, tasks)
+
+
+def _do_main_agent(lane: str) -> str:
+    return "verifier" if lane == "verify" else "builder"
+
+
+def _collect_host_diff(repo_path: Path) -> str:
+    try:
+        diff = subprocess.run(["git", "diff", "--"], cwd=repo_path, capture_output=True, text=True)
+        status = subprocess.run(["git", "status", "--short"], cwd=repo_path, capture_output=True, text=True)
+    except FileNotFoundError:
+        return ""
+    chunks: list[str] = []
+    if diff.returncode == 0 and diff.stdout.strip():
+        chunks.append(diff.stdout.strip())
+    if status.returncode == 0:
+        untracked = [line[3:].strip() for line in status.stdout.splitlines() if line.startswith("?? ")]
+        if untracked:
+            chunks.append("Untracked files:\n" + "\n".join(f"- {path}" for path in untracked))
+    return "\n\n".join(chunks).strip()
+
+
+def _collect_host_change_inventory(repo_path: Path, task_id: str, attempt_no: int) -> str:
+    lines, _ = _git_status_lines(repo_path)
+    return json.dumps(_inventory_from_git_status_lines(task_id, attempt_no, lines), ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _collect_host_git_status_snapshot(repo_path: Path, task_id: str, attempt_no: int, phase: str) -> str:
+    lines, error = _git_status_lines(repo_path)
+    snapshot: dict[str, Any] = {
+        "task_id": task_id,
+        "attempt_no": attempt_no,
+        "phase": phase,
+        "cwd": str(repo_path),
+        "git_status_short": lines,
+        "inventory": _inventory_from_git_status_lines(task_id, attempt_no, lines),
+    }
+    if error:
+        snapshot["error"] = error
+    return json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _git_status_lines(repo_path: Path) -> tuple[list[str], str | None]:
+    try:
+        status = subprocess.run(["git", "status", "--short"], cwd=repo_path, capture_output=True, text=True)
+    except FileNotFoundError:
+        return [], "git executable not found"
+    if status.returncode != 0:
+        error = status.stderr.strip() or f"git status exited with {status.returncode}"
+        return [], error
+    return [line for line in status.stdout.splitlines() if line.strip()], None
+
+
+def _inventory_from_git_status_lines(task_id: str, attempt_no: int, lines: list[str]) -> dict[str, Any]:
+    inventory: dict[str, Any] = {
+        "task_id": task_id,
+        "attempt_no": attempt_no,
+        "tracked_modified": [],
+        "tracked_deleted": [],
+        "untracked_new": [],
+        "renamed": [],
+        "categories": {"code": [], "sql": [], "config": [], "ui": [], "doc": [], "unknown": []},
+    }
+    for line in lines:
+        marker = line[:2]
+        path = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+            inventory["renamed"].append(path)
+        elif marker == "??":
+            inventory["untracked_new"].append(path)
+        elif "D" in marker:
+            inventory["tracked_deleted"].append(path)
+        else:
+            inventory["tracked_modified"].append(path)
+        inventory["categories"][_change_category(path)].append(path)
+    return inventory
+
+
+def _change_category(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".sql":
+        return "sql"
+    if suffix in {".yml", ".yaml", ".json", ".toml", ".ini", ".env", ".properties"}:
+        return "config"
+    if suffix in {".html", ".css", ".scss", ".vue", ".tsx", ".jsx", ".jsp"}:
+        return "ui"
+    if suffix in {".md", ".rst", ".txt"}:
+        return "doc"
+    if suffix:
+        return "code"
+    return "unknown"
+
+
+def _content_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _runtime_ref_integrity_gaps(repo_path: Path, refs: list[dict[str, Any]]) -> list[str]:
+    gaps: list[str] = []
+    for ref in refs:
+        path_value = ref.get("path")
+        expected_hash = ref.get("content_hash")
+        if not path_value or not expected_hash:
+            gaps.append(f"runtime ref missing hash: {ref.get('kind') or 'unknown'}")
+            continue
+        path = repo_path / str(path_value)
+        if not path.exists():
+            gaps.append(f"runtime ref missing file: {path_value}")
+            continue
+        actual_hash = _content_hash(path)
+        if actual_hash != expected_hash:
+            gaps.append(f"runtime ref hash mismatch: {path_value}")
+    return gaps

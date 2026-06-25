@@ -28,6 +28,7 @@ class SQLiteStore:
             for statement in SCHEMA:
                 conn.execute(statement)
             self._migrate_branch_sessions(conn)
+            self._migrate_runtime_refs(conn)
             conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
     def schema_version(self) -> int:
@@ -55,6 +56,10 @@ class SQLiteStore:
         if "recommended_task_id" not in columns:
             conn.execute("ALTER TABLE branch_sessions ADD COLUMN recommended_task_id TEXT")
 
+    def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
+        if columns and "content_hash" not in columns:
+            conn.execute("ALTER TABLE runtime_refs ADD COLUMN content_hash TEXT")
     def get_or_create_branch_session(self, branch_name: str, branch_slug: str, artifact_root: str) -> dict[str, Any]:
         self.initialize()
         now = utc_now()
@@ -103,13 +108,17 @@ class SQLiteStore:
         with self.connect() as conn:
             existing = conn.execute(
                 """
-                SELECT id FROM artifact_revisions
+                SELECT id, based_on_spec_hash, based_on_plan_hash, based_on_tasks_hash FROM artifact_revisions
                 WHERE branch_session_id = ? AND kind = ? AND content_hash = ?
                 ORDER BY id DESC LIMIT 1
                 """,
                 (session_id, kind, content_hash),
             ).fetchone()
-            if existing:
+            if existing and (
+                existing["based_on_spec_hash"] == based_on_spec_hash
+                and existing["based_on_plan_hash"] == based_on_plan_hash
+                and existing["based_on_tasks_hash"] == based_on_tasks_hash
+            ):
                 return int(existing["id"])
             cursor = conn.execute(
                 """
@@ -337,14 +346,14 @@ class SQLiteStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def add_runtime_ref(self, attempt_id: int, kind: str, path: str) -> int:
+    def add_runtime_ref(self, attempt_id: int, kind: str, path: str, content_hash: str | None = None) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO runtime_refs (attempt_id, kind, path, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (attempt_id, kind, path, utc_now()),
+                (attempt_id, kind, path, content_hash, utc_now()),
             )
             return int(cursor.lastrowid)
 
