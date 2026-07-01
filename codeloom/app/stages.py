@@ -40,6 +40,8 @@ class NextRecommendation:
 def _loom_command(command: str) -> str:
     return f"/loom-{command}"
 
+def _artifact_drift_message(kind: str) -> str:
+    return f"{kind}.md changed outside registered artifact revision"
 ARTIFACT_STAGE_MAIN_AGENTS = {
     "spec": "spec-analyzer",
     "plan": "plan-architect",
@@ -208,10 +210,17 @@ class StageRunner:
                 None,
                 "artifact_drift",
                 "warning",
-                f"{kind}.md changed outside registered artifact revision",
+                _artifact_drift_message(kind),
                 None,
             )
         return content_hash
+
+    def _resolve_artifact_drift(self, context: StageContext, kind: str) -> None:
+        context.store.resolve_open_findings(
+            int(context.session["id"]),
+            "artifact_drift",
+            _artifact_drift_message(kind),
+        )
 
     def _drift_response(self, context: StageContext, spec_hash: str | None, plan_hash: str | None) -> KernelResponse | None:
         session_id = int(context.session["id"])
@@ -497,6 +506,7 @@ class StageRunner:
         path, content_hash = context.artifacts.write("spec", content)
         session_id = int(context.session["id"])
         context.store.record_artifact_revision(session_id, "spec", context.artifacts.relative(path), content_hash)
+        self._resolve_artifact_drift(context, "spec")
         context.store.update_branch_session(
             session_id,
             active_stage="spec",
@@ -531,6 +541,7 @@ class StageRunner:
         path, content_hash = context.artifacts.write("plan", content)
         session_id = int(context.session["id"])
         context.store.record_artifact_revision(session_id, "plan", context.artifacts.relative(path), content_hash, based_on_spec_hash=spec_hash)
+        self._resolve_artifact_drift(context, "plan")
         context.store.update_branch_session(
             session_id,
             active_stage="plan",
@@ -586,8 +597,10 @@ class StageRunner:
             based_on_plan_hash=plan_hash,
         )
         self._record_task_snapshots(context, content, tasks_hash)
-        recommended_task_id = tasks[0].task_id if tasks else None
-        recommended_next = self._recommended_do(recommended_task_id) if recommended_task_id else _loom_command("do")
+        self._resolve_artifact_drift(context, "tasks")
+        next_task = self._select_recommended_task(context, tasks)
+        recommended_next = _loom_command("ship") if next_task is None else self._recommended_do(next_task.task_id)
+        recommended_task_id = None if next_task is None else next_task.task_id
         context.store.update_branch_session(
             session_id,
             active_stage="tasks",
@@ -861,7 +874,7 @@ class StageRunner:
             "change-inventory.json",
             _collect_host_change_inventory(context.request.cwd, task.task_id, attempt_no),
         )
-        self._write_runtime_ref(
+        verification_summary_ref = self._write_runtime_ref(
             context,
             attempt_id,
             task.task_id,
@@ -870,6 +883,17 @@ class StageRunner:
             "verification-summary.json",
             verification_summary,
         )
+        if task.lane == "verify" and verification_summary_ref is not None:
+            verification_status = "passed" if final_status == "verified" else final_status
+            context.store.record_verification(
+                attempt_id,
+                "claude-code verification",
+                verification_status,
+                0 if verification_status == "passed" else None,
+                None,
+                None,
+                summary_ref=verification_summary_ref,
+            )
         if task.lane == "verify" and final_status == "verified" and not self._has_verification_evidence(context, attempt_id):
             final_status = "blocked"
             summary = f"{summary}\nMissing verification evidence for {task.task_id}"
@@ -998,6 +1022,7 @@ class StageRunner:
             based_on_plan_hash=plan_hash,
             based_on_tasks_hash=tasks_hash,
         )
+        self._resolve_artifact_drift(context, "ship")
         response_status = "ok" if ship_status == "shippable" else "blocked"
         recommendation = NextRecommendation(None) if ship_status == "shippable" else self._derive_recommendation(context)
         context.store.update_branch_session(
@@ -1023,9 +1048,6 @@ class StageRunner:
         return summary
 
     def _has_verification_evidence(self, context: StageContext, attempt_id: int) -> bool:
-        refs = context.store.runtime_refs(attempt_id)
-        if any(ref.get("kind") == "verification_summary" for ref in refs):
-            return True
         return any(item.get("status") == "passed" for item in context.store.verifications_for_attempt(attempt_id))
 
     def _structured_runtime_refs(self, context: StageContext, attempt: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1053,6 +1075,7 @@ class StageRunner:
         session_id = int(context.session["id"])
         for task in parse_tasks(tasks_content):
             context.store.upsert_task_snapshot(session_id, task.task_id, task.fingerprint, tasks_hash, task.title)
+
 
     def _select_recommended_task(self, context: StageContext, tasks: list[TaskDefinition]) -> TaskDefinition | None:
         session_id = int(context.session["id"])

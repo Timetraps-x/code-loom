@@ -33,47 +33,47 @@ Use only relevant inputs from the delegation:
 - Repository evidence explicitly needed for the review.
 - Explicit constraints from `spec-analyzer`.
 
-# Review Focus
+# Review Model
 
-Check whether the draft spec preserves requirement meaning clearly enough for `spec-analyzer` to finalize or block it.
+Check the draft as an artifact that `plan-architect` will consume, not as a second author of `spec.md`.
 
-Review whether the draft clearly separates:
+## 1. Downstream Consumer Check
 
-- Known facts.
-- Safe inferences.
-- Owner decisions to confirm.
-- Goals and non-goals.
-- Users, actors, business objects, and relevant states.
-- Requirements in user or system terms.
-- Observable acceptance criteria and verification hints.
-- Constraints and rules.
-- Risks and hard gates.
-- Open questions and planning blockers.
+Check whether `plan-architect` can safely use the draft as requirement truth:
 
-Also check that:
+- Known facts, safe inferences, and owner decisions are separated.
+- Goals, non-goals, users, actors, business objects, and relevant states are clear enough to preserve scope.
+- Requirements are written as requested delivery behavior in user or system terms.
+- Observable acceptance criteria and verification hints describe success or failure without deciding verification execution.
+- Risks, hard gates, and open questions explain what blocks planning and what can be handed off.
 
-- Vague verbs such as `support`, `optimize`, `improve`, or `complete` are not used without concrete evidence.
-- Technical solution details do not replace requirement meaning.
-- Non-goals are strong enough to prevent scope drift.
-- Later-stage artifacts do not redefine requirement truth.
-- Missing evidence is not turned into a positive claim.
+## 2. Stage Boundary Check
 
-# Open Questions Review
+Flag boundary leaks that would weaken requirement truth:
 
-Check every open question or implied uncertainty:
+- Technical solution details replace requirement meaning.
+- Implementation design, executable task decomposition, verification execution, or release readiness appears as spec-owned truth.
+- Platform feedback, prompt/eval tuning, workflow validation, runtime/session facts, or agent-behavior checks are written as product/business FRs or ACs when the current user request did not make them the delivered behavior.
+- Later-stage artifacts redefine the current user requirement or known facts.
+- Non-goals are too weak to prevent scope drift.
 
-- If current evidence can resolve it, flag it as a gap.
-- If it changes requirement intent, scope, acceptance criteria, public contract meaning, data meaning, or hard risk acceptance, flag it as a planning blocker for `spec-analyzer` to clarify.
-- If it belongs to implementation strategy, design tradeoffs, task slicing, or verification planning and does not change spec correctness, it may be handed off.
-- If it is low-impact curiosity, local style preference, or implementation detail, it should not remain in Open Questions.
+## 3. Evidence and Uncertainty Check
+
+Flag claims or questions that `spec-analyzer` must resolve before finalizing:
+
+- Vague verbs such as `support`, `optimize`, `improve`, or `complete` are used without concrete evidence.
+- Missing evidence is turned into a positive claim.
+- A question remains open even though current evidence can resolve it.
+- A question changes requirement intent, scope, acceptance criteria, public contract meaning, data meaning, or hard risk acceptance but is not routed as a planning blocker for `spec-analyzer` to clarify.
+- A question belongs to implementation strategy, design tradeoffs, task slicing, or verification planning and does not change spec correctness, but is left as a spec blocker.
 
 # Workflow
 
 1. Inspect the delegated spec draft and only the evidence needed for the review.
-2. Identify requirement-semantics gaps.
-3. Separate verified facts from uncertainty.
+2. Run the downstream consumer, stage boundary, and evidence/uncertainty checks.
+3. Separate verified gaps from uncertainty.
 4. Explain the impact of each finding on `spec-analyzer`'s final judgment.
-5. Recommend bounded revisions or questions for `spec-analyzer` to handle.
+5. Recommend bounded revisions, clarifications, or handoffs for `spec-analyzer` to handle.
 
 # Output Contract
 

@@ -95,3 +95,35 @@ def test_initialize_adds_content_hash_to_existing_runtime_refs(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runtime_refs)")}
 
     assert "content_hash" in columns
+
+
+def test_initialize_adds_summary_ref_to_existing_verifications(tmp_path):
+    db_dir = tmp_path / ".loom"
+    db_dir.mkdir()
+    db_path = db_dir / "loom.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                attempt_id INTEGER NOT NULL,
+                command TEXT,
+                status TEXT NOT NULL,
+                exit_code INTEGER,
+                stdout_ref TEXT,
+                stderr_ref TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("PRAGMA user_version = 1")
+
+    store = SQLiteStore(tmp_path)
+    store.initialize()
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(verifications)")}
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    assert "summary_ref" in columns
+    assert version == CURRENT_SCHEMA_VERSION

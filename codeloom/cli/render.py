@@ -70,6 +70,25 @@ def render_init(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_adopt(data: dict[str, Any]) -> str:
+    constitution = data.get("constitution") or {}
+    lines = [
+        f"Status: {data['status']}",
+        f"Message: {data['message']}",
+        f"Constitution: {constitution.get('path', '')}",
+    ]
+    current_hash = _short_hash(constitution.get("current_hash"))
+    registered_hash = _short_hash(constitution.get("registered_hash"))
+    if current_hash:
+        lines.append(f"Current hash: {current_hash}")
+    if registered_hash:
+        lines.append(f"Registered hash: {registered_hash}")
+    if data.get("errors"):
+        lines.append("Errors:")
+        lines.extend(f"  - {error}" for error in data["errors"])
+    return "\n".join(lines)
+
+
 def render_status(data: dict[str, Any]) -> str:
     lines = [
         f"Status: {data['status']}",
@@ -90,6 +109,16 @@ def render_status(data: dict[str, Any]) -> str:
                 lines.append(f"  - {key}: {_short_hash(value)}")
     else:
         lines.append("Session: missing")
+
+    constitution = data.get("constitution") or {}
+    if constitution:
+        state = "present" if constitution.get("exists") else "missing"
+        current_hash = _short_hash(constitution.get("current_hash"))
+        registered_hash = _short_hash(constitution.get("registered_hash"))
+        match = "matched" if constitution.get("matches_registered") else "unmatched"
+        suffix = f" current={current_hash}" if current_hash else ""
+        registered = f" registered={registered_hash}" if registered_hash else ""
+        lines.append(f"Constitution: {state} {match}{suffix}{registered} {constitution.get('path')}")
 
     lines.append("Artifacts:")
     for kind, artifact in data.get("artifacts", {}).items():

@@ -29,6 +29,7 @@ class SQLiteStore:
                 conn.execute(statement)
             self._migrate_branch_sessions(conn)
             self._migrate_runtime_refs(conn)
+            self._migrate_verifications(conn)
             conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
     def schema_version(self) -> int:
@@ -60,6 +61,12 @@ class SQLiteStore:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
         if columns and "content_hash" not in columns:
             conn.execute("ALTER TABLE runtime_refs ADD COLUMN content_hash TEXT")
+
+    def _migrate_verifications(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(verifications)").fetchall()}
+        if columns and "summary_ref" not in columns:
+            conn.execute("ALTER TABLE verifications ADD COLUMN summary_ref TEXT")
+
     def get_or_create_branch_session(self, branch_name: str, branch_slug: str, artifact_root: str) -> dict[str, Any]:
         self.initialize()
         now = utc_now()
@@ -270,15 +277,16 @@ class SQLiteStore:
         exit_code: int | None,
         stdout_ref: str | None,
         stderr_ref: str | None,
+        summary_ref: str | None = None,
     ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO verifications
-                    (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, summary_ref, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, utc_now()),
+                (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, summary_ref, utc_now()),
             )
             return int(cursor.lastrowid)
 
@@ -323,6 +331,15 @@ class SQLiteStore:
         if kind is not None:
             query += " AND kind = ?"
             params.append(kind)
+        with self.connect() as conn:
+            conn.execute(query, params)
+
+    def resolve_open_findings(self, session_id: int, kind: str, message: str | None = None) -> None:
+        query = "UPDATE findings SET status = 'resolved' WHERE branch_session_id = ? AND kind = ? AND status = 'open'"
+        params: list[Any] = [session_id, kind]
+        if message is not None:
+            query += " AND message = ?"
+            params.append(message)
         with self.connect() as conn:
             conn.execute(query, params)
 

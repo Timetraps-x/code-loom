@@ -12,7 +12,8 @@ class TaskDefinition:
     raw: str
     fingerprint: str
     lane: str = "build"
-
+    complexity: str = "small"
+    revision: str = "1"
 
 def branch_slug(branch_name: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "__", branch_name)
@@ -24,6 +25,7 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
     tasks: list[TaskDefinition] = []
     lines = content.splitlines()
     task_pattern = re.compile(r"^\s*-\s*\[[ xX]\]\s*(T\d+)\s*:\s*(.+?)\s*$")
+    top_level_section_pattern = re.compile(r"^\s*##\s+")
     current_lane: str | None = None
     index = 0
     while index < len(lines):
@@ -36,13 +38,29 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
 
         task_id, title = match.groups()
         block_end = index + 1
-        while block_end < len(lines) and not task_pattern.match(lines[block_end]):
+        while (
+            block_end < len(lines)
+            and not task_pattern.match(lines[block_end])
+            and not top_level_section_pattern.match(lines[block_end])
+        ):
             block_end += 1
 
         raw = "\n".join(lines[index:block_end]).strip()
         lane = _block_lane(lines[index + 1 : block_end]) or current_lane or _title_lane(title)
-        fingerprint = hashlib.sha256(f"{raw}\nLane: {lane}".encode("utf-8")).hexdigest()
-        tasks.append(TaskDefinition(task_id=task_id, title=title, raw=raw, fingerprint=fingerprint, lane=lane))
+        complexity = _block_complexity(lines[index + 1 : block_end])
+        revision = _block_revision(lines[index + 1 : block_end])
+        fingerprint = _task_fingerprint(task_id, title, lane, complexity, revision)
+        tasks.append(
+            TaskDefinition(
+                task_id=task_id,
+                title=title,
+                raw=raw,
+                fingerprint=fingerprint,
+                lane=lane,
+                complexity=complexity,
+                revision=revision,
+            )
+        )
         index = block_end
     return tasks
 
@@ -59,6 +77,30 @@ def _block_lane(lines: list[str]) -> str | None:
         if match:
             return match.group(1).lower()
     return None
+
+
+def _block_complexity(lines: list[str]) -> str:
+    pattern = re.compile(r"^\s*-?\s*Complexity\s*:\s*(trivial|small|non-trivial)\b", re.IGNORECASE)
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            return match.group(1).lower()
+    return "small"
+
+
+def _block_revision(lines: list[str]) -> str:
+    pattern = re.compile(r"^\s*-?\s*Revision\s*:\s*([^\s]+)\s*$", re.IGNORECASE)
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return "1"
+
+
+def _task_fingerprint(task_id: str, title: str, lane: str, complexity: str, revision: str) -> str:
+    return hashlib.sha256(
+        f"{task_id}\n{title.strip()}\nLane: {lane}\nComplexity: {complexity}\nRevision: {revision}".encode("utf-8")
+    ).hexdigest()
 
 
 def _title_lane(title: str) -> str:

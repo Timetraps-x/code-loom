@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from importlib import resources
 
 from codeloom.app.claude_plugin import _agent_rule, _argument_rule, _content_rule
-
+from codeloom.prompt_evals.supplement import missing_prompt_eval_case_drafts, write_missing_prompt_eval_cases
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,19 @@ def _assert_guardrails(case: PromptEvalCase) -> None:
     missing = [guardrail for guardrail in case.required_guardrails if guardrail not in case.surface]
     assert not missing, f"{case.name} missing guardrails for badcase '{case.badcase}': {missing}"
 
+def test_prompt_eval_supplementer_writes_missing_case_drafts(tmp_path):
+    missing = missing_prompt_eval_case_drafts(tmp_path)
+    output_path = tmp_path / "suggested_cases.json"
+
+    report = write_missing_prompt_eval_cases(tmp_path, output_path)
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert not report.complete
+    assert missing
+    assert payload["cases"]
+    assert payload["cases"][0]["id"] == missing[0].id
+    assert payload["cases"][0]["surfaces"]
+
 
 def test_spec_prompt_eval_good_and_bad_cases():
     analyzer = _agent_prompt("spec-analyzer.md")
@@ -30,6 +44,9 @@ def test_spec_prompt_eval_good_and_bad_cases():
 
     for expected in (
         "Observable acceptance criteria and verification hints",
+        "requested delivery behavior",
+        "not platform eval/tuning obligations",
+        "Do not write platform feedback, prompt/eval tuning, workflow validation, runtime/session facts, or agent-behavior checks as product/business FRs or ACs",
         "Do not convert vague words such as `support`, `optimize`, `improve`, or `complete` into specific behavior without evidence",
         "Separate known facts, safe inferences, and owner decisions to confirm",
         "Do not treat inferred facts as known facts",
@@ -42,11 +59,13 @@ def test_spec_prompt_eval_good_and_bad_cases():
 
     for expected in (
         "bounded specialist reviewer supporting `spec-analyzer`",
-        "Produce findings, evidence, uncertainty, and impact",
+        "Check the draft as an artifact that `plan-architect` will consume",
+        "Downstream Consumer Check",
+        "Stage Boundary Check",
+        "Evidence and Uncertainty Check",
         "Observable acceptance criteria and verification hints",
-        "Vague verbs such as `support`, `optimize`, `improve`, or `complete` are not used without concrete evidence",
-        "Technical solution details do not replace requirement meaning",
-        "Do not turn missing evidence into a positive claim",
+        "Vague verbs such as `support`, `optimize`, `improve`, or `complete` are used without concrete evidence",
+        "Technical solution details replace requirement meaning",
         "Questions the main agent may need to ask",
     ):
         assert expected in reviewer
@@ -54,6 +73,7 @@ def test_spec_prompt_eval_good_and_bad_cases():
 
 def test_plan_and_tasks_prompt_eval_stage_projection_cases():
     plan = _agent_prompt("plan-architect.md")
+    plan_reviewer = _agent_prompt("plan-reviewer.md")
     task_planner = _agent_prompt("task-planner.md")
     task_reviewer = _agent_prompt("task-reviewer.md")
 
@@ -64,6 +84,12 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         "do-stage boundaries",
         "Do not delegate architecture direction",
         "Explicit task-planning readiness",
+        "Current requirement semantics",
+        "constitution may be stale or lower-quality",
+        "Matching stack material under `.loom/references/positive-cases/`",
+        "discard unrelated rules and absent-stack material",
+        "never copy constitution or positive-case text into the plan",
+        "do not use stack material to add new requirements or broaden plan scope",
     ):
         assert expected in plan
 
@@ -78,6 +104,18 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         assert phrase not in plan
 
     for expected in (
+        "bounded specialist reviewer supporting `plan-architect`",
+        "Check the draft as an artifact that `task-planner` will consume",
+        "Downstream Consumer Check",
+        "Stage Boundary Check",
+        "Evidence and Uncertainty Check",
+        "The plan writes task slicing rationale, executable task groups, builder instructions, execution order, do-stage boundaries, or release conclusions",
+        "Missing current-state evidence is treated as a design fact",
+        "Questions the main agent may need to ask",
+    ):
+        assert expected in plan_reviewer
+
+    for expected in (
         "You own the translation from `plan.md` design facts",
         "Every executable task must be either",
         "Do not copy large plan sections",
@@ -85,23 +123,29 @@ def test_plan_and_tasks_prompt_eval_stage_projection_cases():
         "Do extract enough execution context from `plan.md`",
         "without rereading the whole plan",
         "checklist-adjacent metadata",
-        "Do not rely on Delivery Map, section headings, or Task Notes to provide Kernel metadata",
-        "Task List metadata is the runtime source of truth",
+        "Do not rely on Delivery Map, section headings, or Task Notes to provide task metadata",
+        "Task Notes are execution context only",
         "`Lane`, `Complexity`, and `Revision` metadata",
-        "preserve a task's `Revision` unless",
+        "first compare the existing parseable Task List metadata and task meanings",
+        "Preserve a task's `Revision` unless",
         "Do not bump `Revision`",
     ):
         assert expected in task_planner
 
     for expected in (
         "bounded specialist reviewer supporting `task-planner`",
-        "only build or verify tasks",
+        "Check the draft as an artifact that do-stage agents will consume",
+        "Do-Stage Consumer Check",
+        "Execution-Slicing Check",
+        "Verification Coverage Check",
+        "Stage Boundary Check",
+        "Every parseable task is only build or verify",
+        "Every parseable task line has immediate `Lane`, `Complexity`, and `Revision` metadata",
+        "execution may use the wrong lane, complexity, or revision",
+        "compare existing parseable Task List metadata and task meanings",
+        "missing or unnecessary `Revision` bumps",
         "Grouped verification is allowed",
-        "every parseable task line has immediate `Lane`, `Complexity`, and `Revision` metadata",
-        "Kernel routing may call the wrong agent",
-        "preserve `Revision` unless execution boundary",
         "without copying large plan sections",
-        "micromanaging function names, local variables, line-level edits",
         "Questions the main agent may need to ask",
     ):
         assert expected in task_reviewer
@@ -118,7 +162,7 @@ def test_loom_tasks_skill_prompt_eval_assignment_cases():
             required_guardrails=(
                 "Missing facts that block safe slicing",
                 "returned as blocked",
-                "do not create scout, research",
+                "lanes other than `build` or `verify`",
             ),
         ),
         PromptEvalCase(
@@ -383,6 +427,8 @@ def test_builder_prompt_eval_good_cases():
         "existing-code consistency, correctness, performance, maintainability, change cost, and verification cost",
         "code-reviewer",
         "Return implementation evidence without claiming full verification",
+        "read only matching material under `.loom/references/positive-cases/`",
+        "not as a source of new task scope",
     ):
         assert expected in prompt
 
@@ -426,6 +472,16 @@ def test_builder_prompt_eval_bad_cases():
                 "stop as blocked and report which upstream artifact needs revision",
             ),
         ),
+        PromptEvalCase(
+            name="positive_cases_do_not_expand_build_scope",
+            surface=prompt,
+            badcase="builder reads a positive case from another stack and adds extra architecture beyond the task",
+            required_guardrails=(
+                "read only matching material under `.loom/references/positive-cases/`",
+                "Do not apply stack material for languages or frameworks absent from the repository",
+                "do not use positive cases to expand the task beyond its boundary",
+            ),
+        ),
     )
 
     for case in cases:
@@ -448,6 +504,16 @@ def test_code_reviewer_prompt_eval_bad_cases():
             required_guardrails=(
                 "missing_preserved_constraint",
                 "verification_gap",
+            ),
+        ),
+        PromptEvalCase(
+            name="review_uses_matching_stack_material_only",
+            surface=prompt,
+            badcase="code reviewer imports positive-case guidance from an absent language or flags generic style without diff evidence",
+            required_guardrails=(
+                "read only matching material under `.loom/references/positive-cases/`",
+                "Stack-material findings must explain the actual stack-local threshold",
+                "findings still require concrete diff evidence",
             ),
         ),
     )
@@ -547,6 +613,32 @@ def test_prompt_eval_rejects_old_smallest_implementation_bias():
         for phrase in forbidden:
             assert phrase not in surface, f"{surface_name} still contains biased phrase: {phrase}"
 
+
+def test_core_agent_prompts_keep_stack_specific_verification_out_of_global_surfaces():
+    surfaces = {
+        "task-planner": _agent_prompt("task-planner.md"),
+        "builder": _agent_prompt("builder.md"),
+        "verifier": _agent_prompt("verifier.md"),
+        "loom-do": _agent_rule("do"),
+    }
+    forbidden = (
+        "legacy Spring/MyBatis/XML modules",
+        "mapper XML/static SQL inspection",
+        "Spring `ApplicationContext` test",
+        "Spring Context test",
+    )
+
+    for surface_name, surface in surfaces.items():
+        for phrase in forbidden:
+            assert phrase not in surface, f"{surface_name} still contains stack-specific verification detail: {phrase}"
+
+    required_generic = (
+        "broad runtime or integration harness",
+        "stack-local",
+    )
+    for surface_name, surface in surfaces.items():
+        for phrase in required_generic:
+            assert phrase in surface, f"{surface_name} missing generic verification guidance: {phrase}"
 
 def test_coding_goal_prompt_guardrails_cover_bad_cases():
     builder = _agent_prompt("builder.md")
@@ -653,7 +745,7 @@ def test_coding_goal_prompt_guardrails_cover_bad_cases():
         "without rereading the whole plan",
         "do not make those the default task boundary",
         "checklist-adjacent metadata",
-        "Task Notes are agent/human context only",
+        "Task Notes are execution context only",
     ):
         assert expected in task_planner
 

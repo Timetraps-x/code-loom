@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 COMMANDS = {
+    "adopt": {
+        "description": "Create or revise CodeLoom .loom/constitution.md for this project.",
+        "argument_hint": "optional adoption guidance",
+    },
     "spec": {
         "description": "Create or revise CodeLoom spec.md for the current git branch.",
         "argument_hint": "requirement=<text> or revision_note=<text>",
@@ -85,6 +89,8 @@ def _write(path: Path, content: str, force: bool) -> list[str]:
 
 
 def _skill_content(skill_name: str, command: str, description: str, argument_hint: str) -> str:
+    if command == "adopt":
+        return _adopt_skill_content(skill_name, description, argument_hint)
     argument_rule = _argument_rule(command)
     agent_rule = _agent_rule(command)
     content_rule = _content_rule(command)
@@ -120,6 +126,49 @@ Rules:
 """
 
 
+def _adopt_skill_content(skill_name: str, description: str, argument_hint: str) -> str:
+    return f"""---
+name: {skill_name}
+description: {description}
+argument-hint: {argument_hint}
+user-invocable: true
+disable-model-invocation: false
+---
+
+Create or revise the CodeLoom project constitution for this project.
+
+User arguments are available as `$ARGUMENTS`; use them only as adoption guidance, not as workflow state. If `$ARGUMENTS` contains `update-claude`, use the explicit update-claude mode below.
+
+Rules:
+
+- Use the project Claude Code agent `adopt-expert` from `.claude/agents/adopt-expert.md` when available.
+- If `.loom/templates/constitution-template.md` exists, use it as the starting section structure for `.loom/constitution.md`, not as a mandatory checklist.
+- Detect the project's real languages/frameworks before reading positive code-shape cases.
+- If `.loom/references/positive-cases/` exists, read only cases matching the detected stack; do not load every case just because it exists.
+- `adopt-expert` should analyze the project as a whole: repository rules, `CLAUDE.md` files, docs/specs/design/business documents, source code, database design, schema/migration/SQL surfaces, mapper/query conventions, public contracts, stacks, architecture boundaries, verification habits, and assisted-coding risk patterns.
+- `adopt-expert` must classify evidence before writing: stable existing conventions, stable positive shapes, repository rules, current branch artifacts, untracked/in-progress code, target-state designs, legacy/non-propagation candidates, and conflicts needing user decision.
+- If evidence is broad or conflicting, `adopt-expert` may delegate narrow read-only evidence questions to `scout` or `codebase-scout` when available; scouts return evidence only and must not draft constitution rules or decide what belongs in constitution.
+- Before writing, use AskUserQuestion for promotion, authority, or legacy conflicts that would materially change constitution content. Do not ask about facts that can be verified locally or wording that does not change the rule.
+- Current branch artifacts, untracked/in-progress code, and target-state designs must not become direct durable constitution rules unless stable repository evidence supports them or the user confirms promotion.
+- The output artifact is `.loom/constitution.md`; it is the project constitution / quality baseline next to `.loom/project.yml`.
+- Write `.loom/constitution.md` in English by default because it becomes a downstream prompt surface for later LLM stages; use another language only when `$ARGUMENTS` or repository rules explicitly require it.
+- Default mode reads `CLAUDE.md` only as input context; do not emit `CLAUDE.md` rewrite suggestions and do not modify any `CLAUDE.md`.
+- In explicit `update-claude` mode, `adopt-expert` may include bounded `CLAUDE.md suggestions` for host-runtime context such as commands, verification entry points, safety/no-touch rules, and pointers to constitution.md; do not rewrite `CLAUDE.md` unless the command mode explicitly asks for apply.
+- Do not create or edit branch artifacts such as `spec.md`, `plan.md`, `tasks.md`, or `release.md`.
+- Do not update SQLite, runtime state, or CodeLoom branch sessions directly.
+- Keep the constitution concise and focused on durable project code-quality rules: placement/ownership, business/data/state flow visibility, abstraction/reuse/naming thresholds, stack-local code shape, change risk boundaries, and rule stability.
+- Do not generate a project encyclopedia, generic best-practice guide, CodeLoom manual, authority/precedence section, runtime contract, or separate full constitution per language/framework.
+- Write the final clean Markdown directly to `.loom/constitution.md`.
+- After `.loom/constitution.md` exists, use the shell appropriate for the current platform to execute:
+
+```text
+loom adopt --constitution .loom/constitution.md
+```
+
+- Report the returned status, message, constitution path, current hash, registered hash, and errors.
+"""
+
+
 def _argument_rule(command: str) -> str:
     if command == "spec":
         return """- For the `spec` stage, never pass bare user text as an unnamed `--arg` and never invent unsupported keys such as `gap`.
@@ -139,7 +188,15 @@ def _agent_rule(command: str) -> str:
 - For verify tasks, use the project Claude Code agent `verifier` from `.claude/agents/verifier.md` when available; `verifier` is the verify-lane main agent.
 - `builder` may use `spec.md` or `plan.md` only when the task references a specific section or explicit pointer, when task context is ambiguous, or when implementation reveals a conflict with requirement semantics or design facts.
 - When local choices are open, `builder` may choose within the task boundary by considering existing-code consistency, correctness, performance, maintainability, change cost, and verification cost.
+- Current requirement semantics and accepted artifact design outrank `.loom/constitution.md` when they conflict; constitution may be stale or lower-quality during legacy cleanup or architecture upgrade work.
 - If execution would require changing requirement semantics, public contracts, data model semantics, major UI flow, preserved design constraints, or later task boundaries, complete the attempt as `blocked` instead of expanding the task.
+- If `.loom/constitution.md` exists, `builder`, `code-reviewer`, and `verifier` should read only sections relevant to the current task quality, stack guidance, evidence behavior, and any relevant stack profile.
+- Treat `.loom/constitution.md` as the project rulebook / quality baseline; it is not workflow state, runtime evidence, approval, requirement authority, or a substitute for current repository facts.
+- Constitution guidance must not expand the current task boundary or override current requirement semantics, current user instructions, platform hard constraints, current repository facts, accepted artifact design, or host-native project rules.
+- Do not copy constitution text into attempt summaries, review output, or verification handoffs; compress only the relevant constraints.
+- When the working tree is already dirty, distinguish the scoped task diff from unrelated pre-existing changes; do not treat unrelated dirty files as implemented, verified, or release-ready for the current task.
+- If a task changes a public/API/UI response contract, verify the exact response shape with command, test, browser, manual, or inspection evidence; if only static inheritance/source evidence exists, mark end-to-end contract behavior as not verified.
+- Prefer verification evidence that can close in this repository: targeted compile/typecheck, static contract inspection, service-level checks, existing passing tests, or stack-local verification evidence from `.loom/constitution.md`. Do not create or depend on a new broad runtime or integration harness unless current repository evidence shows a comparable harness already starts.
 - `builder` and `verifier` may delegate narrow read-only repository fact questions inside the current task boundary to `codebase-scout` from `.claude/agents/codebase-scout.md` when available.
 - Use generic `scout` only when artifact/runtime/external evidence is needed and `codebase-scout` is too narrow; both scouts must stay advisory and must not decide task status.
 - `builder` should preserve reasonable content density: keep key business/data flow, side effects, transaction boundaries, batch/query behavior, and performance-sensitive paths visible at the useful reading level.
@@ -179,9 +236,9 @@ def _content_rule(command: str) -> str:
     template_name = "release-template.md" if command == "ship" else f"{command}-template.md"
     if command == "tasks":
         task_format_rule = (
-            "\n- Executable tasks must be build or verify tasks only; do not create scout, research, discovery, adjustment, planning, release, ship, rollback-summary, or shippability-judgment `Tn` items."
+            "\n- Executable tasks must be build or verify tasks only; do not create `Tn` items for lanes other than `build` or `verify`."
             "\n- Every executable task line must include immediate metadata: `Lane`, `Complexity`, and `Revision`. New tasks start at `Revision: 1`."
-            "\n- When updating an existing `tasks.md`, preserve a task's `Revision` unless its execution boundary, done criteria, verification coverage, lane, or dependency semantics changed; if those changed while keeping the same task id, increment `Revision` by 1."
+            "\n- When updating an existing `tasks.md`, first compare the existing parseable Task List metadata and task meanings against the new draft; preserve a task's `Revision` unless its execution boundary, done criteria, verification coverage, lane, or dependency semantics changed; if those changed while keeping the same task id, increment `Revision` by 1."
             "\n- Do not bump `Revision` for wording, formatting, evidence prose, or non-semantic Task Notes updates."
             "\n- Build tasks need boundaries, dependencies, local completion boundaries, and verification coverage, but they do not each need independent functional verification."
             "\n- Every build task must have a clear verification owner or grouped verify task."
@@ -189,16 +246,27 @@ def _content_rule(command: str) -> str:
             "\n- Do not copy large plan sections into tasks or micromanage function names, local variables, or line-level edits."
             "\n- Extract enough execution context from plan design facts that builder, code-reviewer, and verifier can execute or review the current task without rereading the whole plan."
             "\n- Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked; only non-blocking known constraints, risk notes, and validation notes belong in task context."
-            "\n- Optional `## Ship inputs` content is non-executable and must not contain `- [ ] Tn:` checklist lines."
+            "\n- For each build/verify task, include Task Notes for `Context need`, `Codebase facts to confirm`, and `Quality constraints` when those facts affect execution or verification judgment."
+            "\n- These task-local context fields are execution context only; do not treat them as task metadata and do not place them between the checklist task line and immediate Lane / Complexity / Revision metadata."
+            "\n- When the request includes platform validation, independent artifact review, or eval/prompt tuning beside a product change, keep business build tasks bounded to the product change and place only do-stage verification needs in verify task evidence;"
+            " leave unrelated follow-up outside `tasks.md`."
             "\n- The artifact must contain parseable task lines exactly like `- [ ] T1: <task title>`. Do not use only section headings for tasks."
         )
     artifact_name = "release.md" if command == "ship" else f"{command}.md"
     return f"""- Before drafting, read `.loom/project.yml` and use `specs.language` as the artifact content language for `specs/<branch-slug>/{artifact_name}`; default to English (`en`) when it is missing or unclear.
 - Before drafting, read `.loom/templates/{template_name}` if it exists and use it as the structure and governance for the Markdown artifact.
 - The template controls structure, but `.loom/project.yml` `specs.language` controls the artifact's prose language.
+- If `.loom/constitution.md` exists, read only sections relevant to this stage's output quality, stack guidance, and evidence behavior.
+- Treat `.loom/constitution.md` as the project rulebook / quality baseline; it is not workflow state, runtime evidence, approval, requirement authority, or a substitute for current repository facts.
+- Current requirement semantics and accepted artifact design outrank `.loom/constitution.md` when they conflict; constitution may be stale or lower-quality during legacy cleanup or architecture upgrade work.
+- Constitution guidance must not expand the current branch artifact boundary or override current requirement semantics, current user instructions, platform hard constraints, current repository facts, accepted artifact design, or host-native project rules.
+- Do not copy constitution text into the artifact; compress only relevant constraints into the stage analysis.
+- Separate product or business delivery scope from platform validation scope; artifact review, real-flow validation, and prompt/eval tuning notes must not authorize extra product changes or appear as product artifact content unless the current requirement explicitly changes CodeLoom.
+- Before writing the artifact, apply the stage main agent's Artifact Boundary Gate: write only artifact-owned content, and keep branch/session state, workflow mechanics, platform feedback routing, prompt/eval tuning, and runtime control details out of the Markdown.
+- Artifact factual claims must be backed by current source, repository evidence, runtime evidence, or recorded attempt evidence; mark unsupported claims as assumptions, risks, or not verified.
 - If the template is missing, draft a stage-appropriate Markdown artifact without blocking the Kernel.
 - Use the current host model and the stage main agent to draft the Markdown artifact for this stage before running the Kernel registration command.
-- The artifact file must contain only user-facing Markdown. Do not include agent output contracts, process notes, execution rules, `result_type`, readiness flags, or SQLite/runtime instructions inside the Markdown.
+- The artifact file must contain only user-facing Markdown. Do not include agent output contracts, process notes, execution rules, `result_type`, readiness flags, branch/session facts, platform feedback routing, prompt/eval tuning notes, or SQLite/runtime instructions inside the Markdown.
 - Write the artifact directly to `specs/<branch-slug>/{artifact_name}`. Do not create a parallel temporary copy.
 - Use the same `<branch-slug>` CodeLoom uses for the current git branch; if unsure, read it from `loom status --branch <current-git-branch> --json`.
 - Pass the final artifact file to the Kernel with `--arg artifact_file=specs/<branch-slug>/{artifact_name}`; do not run the Kernel artifact stage without `artifact_file` in `claude-code` host mode.{task_format_rule}"""

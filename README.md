@@ -1,8 +1,8 @@
 # CodeLoom
 
-CodeLoom is a lightweight AI coding workflow harness. It organizes a requirement delivery into `spec -> plan -> tasks -> do -> ship`, and keeps stage artifacts, execution records, and verification evidence inside the project.
+CodeLoom is a lightweight project delivery harness that runs on host agent runtimes such as Claude Code. It organizes a requirement delivery into `spec -> plan -> tasks -> do -> ship`, and keeps stage artifacts, execution records, and verification evidence inside the project.
 
-CodeLoom does not replace Claude Code and does not try to become a full AI coding platform. It owns stage boundaries, artifact projection, task execution records, and delivery convergence.
+CodeLoom does not replace the host runtime, rebuild the agent loop, or become a heavy multi-agent platform. It adds project delivery structure: project engineering baselines, spec/plan/tasks/release artifacts, task attempt state, and feedback regressions so models have the context, boundaries, and evidence structure needed to deliver correct, performant, maintainable, project-fit code.
 
 Chinese documentation: [READMEZH.md](READMEZH.md).
 
@@ -80,7 +80,7 @@ uv run loom --help
 Install from a Git tag:
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.3.1
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.4.0
 loom --help
 ```
 
@@ -132,7 +132,7 @@ The default output is human-readable. Add `--json` for machine output.
 /loom-ship
 ```
 
-These commands draft clean Markdown artifacts and pass them to the CodeLoom Kernel for registration. The Kernel records artifact state, maintains SQLite runtime state, and stores do-attempt evidence.
+These commands draft clean Markdown artifacts and register them through the local CodeLoom harness. CodeLoom records artifact state, maintains SQLite runtime state, and stores do-attempt evidence.
 
 ## Runtime Behavior
 

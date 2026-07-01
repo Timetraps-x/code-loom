@@ -1,8 +1,8 @@
 # CodeLoom
 
-CodeLoom 是一个轻量的 AI coding workflow harness。它把一次需求交付组织为 `spec -> plan -> tasks -> do -> ship`，并把每个阶段的产物、执行记录和验证证据留在项目中。
+CodeLoom 是一个运行在 Claude Code 等 host agent runtime 之上的轻量项目交付 harness。它把一次需求交付组织为 `spec -> plan -> tasks -> do -> ship`，并把每个阶段的产物、执行记录和验证证据留在项目中。
 
-CodeLoom 不替代 Claude Code，也不自建完整 AI coding 平台；它负责阶段边界、产物投影、任务执行记录和交付收敛。
+CodeLoom 不替代 host runtime，不重造 agent loop，也不自建重型多 agent 平台；它通过项目规章基线、需求/设计/任务/发布 artifact、任务尝试状态和反馈回归，为模型提供真实项目交付所需的上下文、边界和证据结构，目标是写出更正确、性能更好、更可维护、更贴合项目的代码。
 
 ## 工作流
 
@@ -78,7 +78,7 @@ uv run loom --help
 从 Git tag 安装：
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.3.1
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.4.0
 loom --help
 ```
 
@@ -130,7 +130,7 @@ loom doctor
 /loom-ship
 ```
 
-这些命令负责生成干净的 Markdown artifact 并交给 CodeLoom Kernel 登记；Kernel 负责维护 artifact 状态、SQLite runtime state 和 do attempt evidence。
+这些命令负责生成干净的 Markdown artifact，并通过本地 CodeLoom harness 登记；CodeLoom 维护 artifact 状态、SQLite runtime state 和 do attempt evidence。
 
 ## Runtime 行为
 

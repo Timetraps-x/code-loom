@@ -43,7 +43,17 @@ Service --> DB
 @enduml
 ```
 
-### 4.2 <Key Target Design Point>
+### 4.2 Existing System Path
+
+Describe the existing code, data, page, permission, command, or runtime path that should be modified. If a new path is required, explain why the current path cannot safely carry the change.
+
+### 4.3 Boundary Map
+
+| Boundary | Owner / Current Path | Target Rule | Must Not Cross |
+|---|---|---|---|
+| <system/data/interface boundary> | <owner/path> | <target behavior> | <out-of-scope or forbidden change> |
+
+### 4.4 <Key Target Design Point>
 
 Describe target entry points, permissions, data flow, validation, boundaries, and invariants.
 
@@ -68,8 +78,7 @@ Entry --> U : <result>
 
 ## 6. Data, State, and Consistency Design
 
-Describe the fields, states, migrations, relationships, invariants, and consistency requirements involved in this change.
-
+Describe the fields, states, migrations, relationships, invariants, and consistency requirements involved in this change. State which null/fallback cases are real external boundaries, legal business states, historical dirty data, or invariant violations that should not be hidden.
 When there is migration, permission switching, release/rollback transition, lifecycle change, or a state machine, provide a state diagram.
 
 ```plantuml
@@ -118,9 +127,14 @@ Describe release order and rollback order for code, configuration, data, permiss
 
 ## 11. Validation Matrix
 
-| Acceptance | Verification Method | Evidence |
-|---|---|---|
-| AC-1 | <Verification method> | <Evidence type> |
+| Area | Scenario | Verification Method | Evidence |
+|---|---|---|---|
+| Changed Path | <Direct behavior changed by this plan> | <Verification method> | <Evidence type> |
+| Upstream Entry | <Page/API/command/scheduled entry> | <Verification method> | <Evidence type> |
+| Downstream Consumer | <Queue/file/email/external/shared consumer> | <Verification method or N/A> | <Evidence type> |
+| Shared Component Regression | <Shared mapper/service/template/permission/config> | <Verification method or N/A> | <Evidence type> |
+| State & Failure | <Idempotency/retry/rollback/partial failure> | <Verification method or N/A> | <Evidence type> |
+| Delivery | <SQL/config/permission/menu/rollback> | <Verification method or N/A> | <Evidence type> |
 
 Recommended minimum automated verification:
 

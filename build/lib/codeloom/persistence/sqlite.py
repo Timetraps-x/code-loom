@@ -28,6 +28,8 @@ class SQLiteStore:
             for statement in SCHEMA:
                 conn.execute(statement)
             self._migrate_branch_sessions(conn)
+            self._migrate_runtime_refs(conn)
+            self._migrate_verifications(conn)
             conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
     def schema_version(self) -> int:
@@ -54,6 +56,16 @@ class SQLiteStore:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(branch_sessions)").fetchall()}
         if "recommended_task_id" not in columns:
             conn.execute("ALTER TABLE branch_sessions ADD COLUMN recommended_task_id TEXT")
+
+    def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
+        if columns and "content_hash" not in columns:
+            conn.execute("ALTER TABLE runtime_refs ADD COLUMN content_hash TEXT")
+
+    def _migrate_verifications(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(verifications)").fetchall()}
+        if columns and "summary_ref" not in columns:
+            conn.execute("ALTER TABLE verifications ADD COLUMN summary_ref TEXT")
 
     def get_or_create_branch_session(self, branch_name: str, branch_slug: str, artifact_root: str) -> dict[str, Any]:
         self.initialize()
@@ -103,13 +115,17 @@ class SQLiteStore:
         with self.connect() as conn:
             existing = conn.execute(
                 """
-                SELECT id FROM artifact_revisions
+                SELECT id, based_on_spec_hash, based_on_plan_hash, based_on_tasks_hash FROM artifact_revisions
                 WHERE branch_session_id = ? AND kind = ? AND content_hash = ?
                 ORDER BY id DESC LIMIT 1
                 """,
                 (session_id, kind, content_hash),
             ).fetchone()
-            if existing:
+            if existing and (
+                existing["based_on_spec_hash"] == based_on_spec_hash
+                and existing["based_on_plan_hash"] == based_on_plan_hash
+                and existing["based_on_tasks_hash"] == based_on_tasks_hash
+            ):
                 return int(existing["id"])
             cursor = conn.execute(
                 """
@@ -261,15 +277,16 @@ class SQLiteStore:
         exit_code: int | None,
         stdout_ref: str | None,
         stderr_ref: str | None,
+        summary_ref: str | None = None,
     ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO verifications
-                    (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, summary_ref, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, utc_now()),
+                (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, summary_ref, utc_now()),
             )
             return int(cursor.lastrowid)
 
@@ -317,6 +334,15 @@ class SQLiteStore:
         with self.connect() as conn:
             conn.execute(query, params)
 
+    def resolve_open_findings(self, session_id: int, kind: str, message: str | None = None) -> None:
+        query = "UPDATE findings SET status = 'resolved' WHERE branch_session_id = ? AND kind = ? AND status = 'open'"
+        params: list[Any] = [session_id, kind]
+        if message is not None:
+            query += " AND message = ?"
+            params.append(message)
+        with self.connect() as conn:
+            conn.execute(query, params)
+
     def open_blocking_findings(self, session_id: int) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute(
@@ -337,14 +363,14 @@ class SQLiteStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def add_runtime_ref(self, attempt_id: int, kind: str, path: str) -> int:
+    def add_runtime_ref(self, attempt_id: int, kind: str, path: str, content_hash: str | None = None) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO runtime_refs (attempt_id, kind, path, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (attempt_id, kind, path, utc_now()),
+                (attempt_id, kind, path, content_hash, utc_now()),
             )
             return int(cursor.lastrowid)
 

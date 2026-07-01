@@ -4,7 +4,7 @@ based_on_plan_hash: `<plan-hash>`
 
 > Kernel interface:
 > `/loom:do` parses checklist tasks and their immediate metadata as the runtime source of truth.
-> Every executable task MUST use this format:
+> Task format:
 >
 > ```markdown
 > - [ ] T1: <task title>
@@ -15,7 +15,7 @@ based_on_plan_hash: `<plan-hash>`
 >
 > `Revision` changes only when this task's execution boundary, done criteria, verification coverage, lane, or dependency semantics change. Keep it unchanged for wording, formatting, evidence prose, or non-semantic Task Notes updates.
 >
-> `Task Notes` are for agents and humans. Do not rely on `Task Notes` to provide Kernel metadata. If Task List metadata and Task Notes conflict, Task List metadata is the runtime source of truth.
+> `Task Notes` are execution context for readers and host agents. Do not rely on `Task Notes` to provide Kernel metadata. If Task List metadata and Task Notes conflict, Task List metadata is authoritative for task interpretation.
 
 ## 1. Execution Boundary Overview
 
@@ -30,7 +30,7 @@ Executable task lanes stay deliberately small. They describe what `/loom:do` sho
 | build | Implement or modify deliverables, including code, SQL, configuration, UI, or documentation. | builder |
 | verify | Test, accept, summarize evidence, and review risks; may cover multiple build tasks. | verifier |
 
-Do not create executable `Tn` tasks for `scout`, `research`, `discovery`, `planning`, `release`, or `ship`. Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked. Only non-blocking known constraints, risk notes, and validation notes belong in build/verify task context. Release-related information belongs in non-executable `Ship inputs`.
+Do not create executable `Tn` tasks for lanes other than `build` or `verify`. Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked. Only non-blocking known constraints, risk notes, and validation notes belong in build/verify task context.
 
 ## 3. Delivery Map
 
@@ -41,7 +41,7 @@ Do not create executable `Tn` tasks for `scout`, `research`, `discovery`, `plann
 
 ## 4. Verification Coverage Map
 
-This map links build tasks to verification coverage. It is agent/human context, not Kernel metadata. Grouped verification changes verification coverage, not build task granularity; do not merge build tasks merely because they share a verify task.
+This map links build tasks to verification coverage. It is task-planning context, not task metadata. Grouped verification changes verification coverage, maps material impacted regression surfaces, and does so without changing build task granularity; do not merge build tasks merely because they share a verify task.
 
 | Coverage Area | Type | Covered Build Tasks | Verify Tasks | Expected Evidence / Notes |
 |---|---|---|---|---|
@@ -54,7 +54,7 @@ If there are no dependencies, write `Execute in Task List order`.
 | Order | Tasks | Notes |
 |---|---|---|
 | 1 | T1 | <Prerequisite or highest-risk task> |
-| 2 | T2 | <Follow-up verification or release preparation> |
+| 2 | T2 | <Follow-up verification> |
 
 ## 6. Task List
 
@@ -105,6 +105,10 @@ Forbidden:
 
 #### Notes
 
+- Context need: <Why this task needs local context beyond the checklist title>
+- Codebase facts to confirm: <Specific existing paths, symbols, contracts, or conventions to inspect before changing code>
+- Quality constraints: <Relevant constitution, stack, performance, safety, or evidence constraints for this task>
+- These notes are execution context for builder, code-reviewer, and verifier. They are not task metadata.
 - <Only design facts, constraints, invariants, contracts, risk notes, verification requirements, or non-blocking implementation hints that affect execution judgment>
 - Do not copy the plan's reasoning process; preserve enough context for builder, code-reviewer, and verifier to execute or review without rereading the full plan.
 - Do not enumerate ordinary local coding choices; builder should judge them from existing code style and the task boundary.
@@ -145,6 +149,10 @@ Forbidden:
 
 #### Notes
 
+- Context need: <Why this task needs local context beyond the checklist title>
+- Codebase facts to confirm: <Specific existing paths, symbols, contracts, or conventions to inspect before verifying>
+- Quality constraints: <Relevant constitution, stack, performance, safety, or evidence constraints for this task>
+- These notes are execution context for builder, code-reviewer, and verifier. They are not task metadata.
 - <Only design facts, constraints, invariants, contracts, risk notes, verification requirements, or non-blocking implementation hints that affect execution judgment>
 
 ## 8. Global Notes

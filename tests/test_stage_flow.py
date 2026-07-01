@@ -420,6 +420,9 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     verification_summary_ref = next(ref for ref in verify_refs if ref["kind"] == "verification_summary")
     assert verification_summary_ref["content_hash"]
     assert "git_status_complete" in {ref["kind"] for ref in verify_refs}
+    verification = store.verifications_for_attempt(int(verify_attempt["id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == verification_summary_ref["path"]
 
 
 def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
@@ -446,6 +449,9 @@ def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
     refs = store.runtime_refs(int(verify_begin.extras["attempt_id"]))
     summary_ref = next(ref for ref in refs if ref["kind"] == "verification_summary")
     assert repo.joinpath(summary_ref["path"]).read_text(encoding="utf-8") == "claimed verification"
+    verification = store.verifications_for_attempt(int(verify_begin.extras["attempt_id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == summary_ref["path"]
 
 
 def test_claude_code_host_verify_completion_without_explicit_summary_still_blocks(tmp_path):
@@ -557,6 +563,9 @@ def test_claude_code_host_verify_completion_accepts_summary_file(tmp_path):
     summary_ref = next(ref for ref in refs if ref["kind"] == "verification_summary")
     assert repo.joinpath(summary_ref["path"]).read_text(encoding="utf-8") == summary_path.read_text(encoding="utf-8")
     assert summary_ref["content_hash"]
+    verification = store.verifications_for_attempt(int(verify_begin.extras["attempt_id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == summary_ref["path"]
 
 
 def test_claude_code_host_verify_completion_missing_summary_file_keeps_attempt_running(tmp_path):
@@ -917,3 +926,58 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_r
     assert session is not None
     t1_attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
     assert [attempt["status"] for attempt in t1_attempts] == ["implemented", "implemented"]
+
+
+def test_tasks_registration_recommends_ship_when_revisions_unchanged_and_tasks_completed(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    t1_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    assert run_stage(repo, "do", action="complete", attempt_id=str(t1_begin.extras["attempt_id"]), status="implemented").status == "ok"
+    t2_begin = run_stage(repo, "do", task_id="T2", action="begin")
+    assert run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(t2_begin.extras["attempt_id"]),
+        status="verified",
+        summary="verified",
+    ).status == "ok"
+
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8")
+        + "\n\n## 6. Task Notes\n\n### T1: Build host task\n\n- Note: non-semantic evidence prose update\n",
+        encoding="utf-8",
+    )
+
+    registered = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
+
+    assert registered.status == "ok"
+    assert registered.recommended_next == "/loom-ship"
+    assert registered.recommended_task_id is None
+
+
+def test_artifact_drift_finding_resolves_after_artifact_registration(tmp_path):
+    repo = init_repo(tmp_path)
+    write_project_config(repo, runtime="claude-code")
+    _write_host_spec(repo)
+    run_stage(repo, "spec", artifact_file="specs/master/spec.md")
+
+    spec_path = repo / "specs" / "master" / "spec.md"
+    spec_path.write_text("# Spec\n\n## Requirement\nChanged outside registration\n", encoding="utf-8")
+
+    run_stage(repo, "plan")
+
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    findings = store.findings(int(session["id"]))
+    drift = next(finding for finding in findings if finding["kind"] == "artifact_drift")
+    assert drift["status"] == "open"
+
+    registered = run_stage(repo, "spec", artifact_file="specs/master/spec.md")
+
+    assert registered.status == "ok"
+    findings = store.findings(int(session["id"]))
+    drift = next(finding for finding in findings if finding["kind"] == "artifact_drift")
+    assert drift["status"] == "resolved"
