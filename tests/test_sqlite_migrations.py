@@ -127,3 +127,40 @@ def test_initialize_adds_summary_ref_to_existing_verifications(tmp_path):
 
     assert "summary_ref" in columns
     assert version == CURRENT_SCHEMA_VERSION
+
+
+def test_initialize_adds_attempt_start_snapshot_fields_to_existing_attempts(tmp_path):
+    db_dir = tmp_path / ".loom"
+    db_dir.mkdir()
+    db_path = db_dir / "loom.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_session_id INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                attempt_no INTEGER NOT NULL,
+                runtime TEXT NOT NULL,
+                based_on_spec_hash TEXT,
+                based_on_plan_hash TEXT,
+                based_on_tasks_hash TEXT,
+                task_fingerprint TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute("PRAGMA user_version = 2")
+
+    store = SQLiteStore(tmp_path)
+    store.initialize()
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(attempts)")}
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    assert {"start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_tree", "latest_review_context_revision", "latest_review_status", "latest_changes_ref"} <= columns
+    assert version == CURRENT_SCHEMA_VERSION

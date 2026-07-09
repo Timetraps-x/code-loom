@@ -482,6 +482,16 @@ def test_builder_prompt_eval_bad_cases():
                 "do not use positive cases to expand the task beyond its boundary",
             ),
         ),
+        PromptEvalCase(
+            name="builder_places_named_facts_by_semantic_owner",
+            surface=prompt,
+            badcase="builder puts Java SSM entity status enums and constants into ServiceImpl for convenience",
+            required_guardrails=(
+                "semantic owner for enums/constants/status values/keys",
+                "Do not centralize enums, constants, status/type values, or keys in implementation classes",
+                "entity, domain concept, contract, permission, configuration, schema, or existing shared owner",
+            ),
+        ),
     )
 
     for case in cases:
@@ -516,6 +526,46 @@ def test_code_reviewer_prompt_eval_bad_cases():
                 "findings still require concrete diff evidence",
             ),
         ),
+        PromptEvalCase(
+            name="review_uses_attempt_scoped_diff_only",
+            surface=prompt,
+            badcase="code reviewer reviews full working tree diff as current task truth",
+            required_guardrails=(
+                "host-provided attempt-scoped diff",
+                "Do not infer current task changes from full working tree diff",
+                "attempt-changes.json",
+            ),
+        ),
+        PromptEvalCase(
+            name="review_blocks_missing_scoped_evidence",
+            surface=prompt,
+            badcase="code reviewer passes review despite missing scoped diff",
+            required_guardrails=(
+                "evidence_integrity_gap",
+                "review_scope: attempt_scoped | unavailable | stale",
+                "patch_persisted: false",
+            ),
+        ),
+        PromptEvalCase(
+            name="review_does_not_delegate_git_evidence_to_builder",
+            surface=prompt,
+            badcase="code reviewer tells builder to compute scoped diff or write attempt-changes.json",
+            required_guardrails=(
+                "Do not ask builder to capture snapshots",
+                "compute scoped diffs",
+                "write `.loom/runs` evidence",
+            ),
+        ),
+        PromptEvalCase(
+            name="review_flags_misplaced_named_facts",
+            surface=prompt,
+            badcase="code reviewer misses constants and status enums centralized in an implementation class despite entity/domain ownership",
+            required_guardrails=(
+                "Flag misplaced named facts",
+                "convenience placement instead of semantic ownership",
+                "implementation-class placement is valid only for implementation-local facts",
+            ),
+        ),
     )
 
     for case in cases:
@@ -542,10 +592,22 @@ def test_loom_do_skill_prompt_eval_bad_cases():
             ),
         ),
         PromptEvalCase(
-            name="skill_requires_review_after_modification",
+            name="skill_requires_review_context_after_modification",
             surface=prompt,
-            badcase="builder modifies files and closes attempt without independent review",
-            required_guardrails=("After file modifications", "code-reviewer", "before closing the build attempt"),
+            badcase="builder modifies files and host invokes reviewer on full working tree diff",
+            required_guardrails=("After file modifications in a build task", "action=review-context", "code-reviewer"),
+        ),
+        PromptEvalCase(
+            name="skill_keeps_builder_out_of_runtime_evidence",
+            surface=prompt,
+            badcase="host asks builder to generate scoped diff or write .loom runs evidence",
+            required_guardrails=("host owns scoped review evidence", "builder` must not capture Git snapshots", "update SQLite refs"),
+        ),
+        PromptEvalCase(
+            name="skill_requires_latest_review_for_implemented",
+            surface=prompt,
+            badcase="host completes implemented after builder changes files post-review",
+            required_guardrails=("rerun `action=review-context`", "review_context_revision", "review_status=pass"),
         ),
     )
 
@@ -563,6 +625,11 @@ def test_loom_do_skill_prompt_eval_host_handoff_cases():
         "extras.main_agent",
         "builder` is the build-lane main agent",
         "verifier` is the verify-lane main agent",
+        "action=review-context",
+        "review_diff_command",
+        "host-provided attempt-scoped diff",
+        "review_context_revision",
+        "review_status=pass",
         "action=complete",
         "status=<implemented|verified|failed|blocked>",
         "Build attempts must complete as `implemented`, `failed`, or `blocked`",

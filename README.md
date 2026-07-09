@@ -21,7 +21,7 @@ Core principles:
 - `spec.md` describes requirement semantics and observable acceptance criteria.
 - `plan.md` describes design facts, constraints, risks, and verification strategy; it does not define do-stage task slicing.
 - `tasks.md` projects plan design facts into executable build / verify task boundaries, plus a verification coverage map for requested behavior and material regression surfaces.
-- `do` executes only the current task and records runtime output, diffs, git status snapshots, and verification evidence in SQLite / `.loom/runs/`.
+- `do` executes only the current task and records minimal current-lifecycle auxiliary evidence in SQLite / `.loom/runs/`, including attempt changes, runtime logs, and verification summaries when available.
 - `ship` generates `release.md` with completed work, evidence, and remaining risk.
 
 ## Project Layout
@@ -34,13 +34,13 @@ After initialization, a project contains:
 .claude/agents/*.md         # CodeLoom stage / do agents
 .loom/templates/            # Project-customizable artifact templates
 .loom/loom.db               # Local SQLite runtime state
-.loom/runs/<branch_slug>/   # do attempt evidence
+.loom/runs/<branch_slug>/   # Current-lifecycle do attempt auxiliary evidence
 specs/<branch_slug>/        # spec.md / plan.md / tasks.md / release.md
 ```
 
 `.loom/templates/` is the project template area. Teams may edit or replace these templates directly. Running `loom init` again preserves existing templates unless `--force` is used.
 
-`.loom/project.yml`, `.loom/loom.db`, and `.loom/runs/` are local project configuration and runtime state. `specs/<branch_slug>/` contains deliverable Markdown artifacts.
+`.loom/project.yml`, `.loom/loom.db`, and `.loom/runs/` are local project configuration and runtime state. `.loom/runs/` stores minimal auxiliary evidence for the current Loom lifecycle, not long-term audit archives or source-code duplicates. `specs/<branch_slug>/` contains deliverable Markdown artifacts.
 
 ## Specs Artifact Language
 
@@ -144,7 +144,7 @@ The current release focuses on the Python CLI + Claude Code integration:
 - Successful build tasks are recorded as `implemented`; successful verify tasks are recorded as `verified`.
 - Verify tasks require evidence. Missing evidence downgrades a claimed `verified` completion to `blocked`.
 - Blocked attempts can be retried explicitly for the same task without editing `tasks.md`; unrelated tasks remain blocked while a blocking finding is open.
-- do-attempt evidence includes diffs, change inventory, git status begin/complete snapshots with `cwd`, and optional `verification_summary` / `verification_summary_file` content.
+- do-attempt evidence includes lightweight `attempt-changes.json`, runtime stdout/stderr logs when non-empty, and optional `verification_summary` / `verification_summary_file` content; patch files and full git status snapshots are not persisted by default.
 - The do stage treats the current task as the direct execution boundary. It only rereads `spec.md` / `plan.md` when the task points there, context is ambiguous, or implementation reveals a conflict.
 
 ## Verification

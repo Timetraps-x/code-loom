@@ -67,14 +67,14 @@ If not involved, write `N/A because ...`.
 |---|---|---|---|
 | <config key> | <value> | before release / after deploy / rollback | <Notes> |
 
-## 6.1 Change Inventory
+## 6.1 Attempt Changes / Runtime Evidence
 
 | Kind | Paths / Evidence | Notes |
 |---|---|---|
-| Code | <runtime ref or N/A> | <Notes> |
-| SQL / Data | <runtime ref or N/A> | <Notes> |
-| Configuration / Permissions | <runtime ref or N/A> | <Notes> |
-| UI / Menu | <runtime ref or N/A> | <Notes> |
+| Attempt changes | <attempt-changes ref or N/A> | <Notes> |
+| Runtime logs | <stdout/stderr ref or N/A> | <Notes> |
+| Verification summary | <verification-summary ref or N/A> | <Notes> |
+| SQL / Data / Configuration / Permissions / UI | <evidence ref or N/A> | <Notes> |
 ## 7. SQL / Data Changes
 
 If not involved, write `N/A because ...`.
