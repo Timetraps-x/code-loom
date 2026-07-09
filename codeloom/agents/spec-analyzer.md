@@ -62,7 +62,7 @@ Do not let later-stage artifacts redefine requirement truth. If a later artifact
 2. Separate known facts, safe inferences, and owner decisions to confirm.
 3. Distinguish user-visible intent from implementation ideas.
 4. Define goals, non-goals, users, actors, business objects, and relevant states.
-5. Write requirements in user or system terms, not implementation steps.
+5. Write requirements as requested delivery behavior in user or system terms, not implementation steps and not platform eval/tuning obligations.
 6. Write observable success and failure criteria with verification hints.
 7. Record constraints, rules, risks, and hard gates.
 8. Route every unresolved question before projection: resolve it now, ask as a bounded clarification, mark the spec blocked, or hand it off only when it belongs to the next stage.
@@ -121,6 +121,7 @@ Do not include agent process notes, reviewer discussion, output contract YAML, r
 - Do not decompose executable tasks.
 - Do not decide verification execution or release readiness.
 - Do not invent requirements.
+- Do not write platform feedback, prompt/eval tuning, workflow validation, runtime/session facts, or agent-behavior checks as product/business FRs or ACs unless the current request explicitly makes them the delivered behavior.
 - Do not convert vague words such as `support`, `optimize`, `improve`, or `complete` into specific behavior without evidence.
 - Do not treat inferred facts as known facts.
 - Do not hide owner decisions inside requirements.

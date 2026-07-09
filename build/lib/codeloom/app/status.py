@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
-from codeloom.kernel.artifacts import branch_slug
+from codeloom.kernel.artifacts import branch_slug, parse_tasks
 from codeloom.persistence.sqlite import SQLiteStore
 from codeloom.stores.markdown import MarkdownArtifactStore
 
@@ -29,6 +30,7 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         "schema_version": 0,
         "session": None,
         "artifacts": _artifact_statuses(artifacts),
+        "constitution": constitution_status(repo_path, config.constitution_path, config.constitution_hash),
         "open_findings": [],
         "latest_attempts": [],
         "errors": [],
@@ -44,7 +46,9 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         result["session"] = _session_summary(session)
         session_id = int(session["id"])
         result["open_findings"] = _open_findings(store.findings(session_id))
-        result["latest_attempts"] = _latest_attempts(store.attempts(session_id))
+        tasks_content = artifacts.read("tasks") or ""
+        tasks_by_id = {task.task_id: task for task in parse_tasks(tasks_content)}
+        result["latest_attempts"] = _latest_attempts(store.attempts(session_id), tasks_by_id)
     except Exception as exc:
         result["status"] = "failed"
         result["errors"].append(f"{type(exc).__name__}: {exc}")
@@ -94,7 +98,7 @@ def _open_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _latest_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for attempt in attempts:
         latest[str(attempt["task_id"])] = attempt
@@ -102,6 +106,8 @@ def _latest_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {
             "task_id": attempt.get("task_id"),
             "attempt_no": attempt.get("attempt_no"),
+            "lane": tasks_by_id.get(str(attempt.get("task_id"))).lane if tasks_by_id and str(attempt.get("task_id")) in tasks_by_id else None,
+            "complexity": tasks_by_id.get(str(attempt.get("task_id"))).complexity if tasks_by_id and str(attempt.get("task_id")) in tasks_by_id else None,
             "status": attempt.get("status"),
             "summary": attempt.get("summary"),
             "updated_at": attempt.get("updated_at"),

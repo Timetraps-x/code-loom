@@ -13,7 +13,7 @@ class TaskDefinition:
     fingerprint: str
     lane: str = "build"
     complexity: str = "small"
-
+    revision: str = "1"
 
 def branch_slug(branch_name: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "__", branch_name)
@@ -48,7 +48,8 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
         raw = "\n".join(lines[index:block_end]).strip()
         lane = _block_lane(lines[index + 1 : block_end]) or current_lane or _title_lane(title)
         complexity = _block_complexity(lines[index + 1 : block_end])
-        fingerprint = hashlib.sha256(f"{raw}\nLane: {lane}\nComplexity: {complexity}".encode("utf-8")).hexdigest()
+        revision = _block_revision(lines[index + 1 : block_end])
+        fingerprint = _task_fingerprint(task_id, title, lane, complexity, revision)
         tasks.append(
             TaskDefinition(
                 task_id=task_id,
@@ -57,6 +58,7 @@ def parse_tasks(content: str) -> list[TaskDefinition]:
                 fingerprint=fingerprint,
                 lane=lane,
                 complexity=complexity,
+                revision=revision,
             )
         )
         index = block_end
@@ -84,6 +86,21 @@ def _block_complexity(lines: list[str]) -> str:
         if match:
             return match.group(1).lower()
     return "small"
+
+
+def _block_revision(lines: list[str]) -> str:
+    pattern = re.compile(r"^\s*-?\s*Revision\s*:\s*([^\s]+)\s*$", re.IGNORECASE)
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return "1"
+
+
+def _task_fingerprint(task_id: str, title: str, lane: str, complexity: str, revision: str) -> str:
+    return hashlib.sha256(
+        f"{task_id}\n{title.strip()}\nLane: {lane}\nComplexity: {complexity}\nRevision: {revision}".encode("utf-8")
+    ).hexdigest()
 
 
 def _title_lane(title: str) -> str:

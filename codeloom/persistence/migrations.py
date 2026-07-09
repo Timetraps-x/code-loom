@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 SCHEMA = [
     """
@@ -74,6 +74,7 @@ SCHEMA = [
         exit_code INTEGER,
         stdout_ref TEXT,
         stderr_ref TEXT,
+        summary_ref TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(attempt_id) REFERENCES attempts(id)
     )

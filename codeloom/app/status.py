@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
 from codeloom.kernel.artifacts import branch_slug, parse_tasks
 from codeloom.persistence.sqlite import SQLiteStore
@@ -29,6 +30,7 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         "schema_version": 0,
         "session": None,
         "artifacts": _artifact_statuses(artifacts),
+        "constitution": constitution_status(repo_path, config.constitution_path, config.constitution_hash),
         "open_findings": [],
         "latest_attempts": [],
         "errors": [],

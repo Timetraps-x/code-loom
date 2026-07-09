@@ -89,6 +89,7 @@ def test_status_reports_branch_summary(tmp_path, capsys):
     assert "Status: ok" in output
     assert "Recommended next: /loom-plan" in output
     assert "Artifacts:" in output
+    assert "Constitution: present matched" in output
 
 
 def test_doctor_reports_warning_not_large_json_by_default(tmp_path, capsys):
@@ -101,6 +102,7 @@ def test_doctor_reports_warning_not_large_json_by_default(tmp_path, capsys):
     assert exit_code == 0
     assert output.startswith("Status: warning")
     assert "verification commands" in output
+    assert "constitution" in output
     assert not output.lstrip().startswith("{")
 
 
@@ -115,3 +117,4 @@ def test_doctor_json_is_available(tmp_path, capsys):
     assert exit_code == 0
     assert payload["status"] == "warning"
     assert payload["checks"]
+    assert any(check["name"] == "constitution" for check in payload["checks"])

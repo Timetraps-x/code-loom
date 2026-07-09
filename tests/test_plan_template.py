@@ -62,7 +62,7 @@ def test_templates_preserve_coding_goal_anchors():
         "Covered by: Tn",
         "Validates: Tn",
         "## 4. Verification Coverage Map",
-        "agent/human context, not Kernel metadata",
+        "task-planning context, not task metadata",
         "material impacted regression surfaces",
         "without changing build task granularity",
         "## 5. Execution Order",
@@ -70,6 +70,10 @@ def test_templates_preserve_coding_goal_anchors():
         "## 7. Task Notes",
         "## 8. Global Notes",
         "Do not expand scope inside the task",
+        "Context need",
+        "Codebase facts to confirm",
+        "Quality constraints",
+        "They are not task metadata",
     ):
         assert expected in tasks
 
@@ -84,16 +88,19 @@ def test_templates_preserve_coding_goal_anchors():
         assert expected in release
 
 
-def test_tasks_template_declares_kernel_metadata_contract():
+def test_tasks_template_declares_task_metadata_contract():
     tasks = _template("tasks-template.md")
 
     for expected in (
-        "`/loom:do` parses checklist tasks and their immediate metadata as the runtime source of truth",
+        "Task format:",
         "- [ ] T1: <task title>",
         "  - Lane: build | verify",
         "  - Complexity: trivial | small | non-trivial",
-        "Task Notes` are for agents and humans",
-        "Task List metadata is the runtime source of truth",
+        "  - Revision: 1",
+        "execution boundary, done criteria, verification coverage, lane, or dependency semantics",
+        "Keep it unchanged for wording, formatting, evidence prose, or non-semantic Task Notes updates",
+        "Task Notes` are execution context for readers and host agents",
+        "Task List metadata is authoritative for task interpretation",
     ):
         assert expected in tasks
 

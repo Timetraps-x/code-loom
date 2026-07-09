@@ -50,22 +50,26 @@ class MockLlmClient(LlmClient):
         status = facts.get("status", "blocked")
         completed = facts.get("completed_tasks", [])
         findings = facts.get("open_findings", [])
+        blockers = facts.get("readiness_blockers", [])
         evidence = facts.get("runtime_refs", [])
+        verification_summary = str(facts.get("verification_summary", ""))
         if language == "zh":
             return (
                 "# 发布计划\n\n"
                 "## 1. 发布结论\n"
                 f"- 状态：{status}\n"
-                "- 判断依据：来自 CodeLoom 任务验证和开放问题。\n\n"
+                "- 判断依据：来自 CodeLoom 任务验证、阻塞项和运行证据。\n\n"
                 "## 2. 变更摘要\n"
                 "- 根据已完成任务和运行证据生成。\n\n"
                 "## 3. 已完成任务\n"
                 + ("\n".join(f"- {task}" for task in completed) or "- 无")
                 + "\n\n## 4. 验证摘要\n"
-                + str(facts.get("verification_summary", ""))
+                + verification_summary
+                + "\n\n### 4.1 未验证 / 阻塞项\n"
+                + ("\n".join(f"- {blocker}" for blocker in blockers) or "- 无")
                 + "\n\n## 5. 开放问题\n"
                 + ("\n".join(f"- {finding}" for finding in findings) or "- 无")
-                + "\n\n## 6. 运行证据引用\n"
+                + "\n\n## 6.1 变更清单 / 运行证据引用\n"
                 + ("\n".join(f"- {ref}" for ref in evidence) or "- 无")
                 + "\n"
             )
@@ -73,16 +77,18 @@ class MockLlmClient(LlmClient):
             "# Release Plan\n\n"
             "## 1. Release Conclusion\n"
             f"- Status: {status}\n"
-            "- Decision reason: derived from CodeLoom task verification and open findings.\n\n"
+            "- Decision reason: derived from CodeLoom task verification, readiness blockers, and runtime evidence.\n\n"
             "## 2. Change Summary\n"
             "- Generated from completed tasks and runtime evidence.\n\n"
             "## 3. Completed Tasks\n"
             + ("\n".join(f"- {task}" for task in completed) or "- None")
             + "\n\n## 4. Verification Summary\n"
-            + str(facts.get("verification_summary", ""))
+            + verification_summary
+            + "\n\n### 4.1 Not Verified / Readiness Blockers\n"
+            + ("\n".join(f"- {blocker}" for blocker in blockers) or "- None")
             + "\n\n## 5. Open Findings\n"
             + ("\n".join(f"- {finding}" for finding in findings) or "- None")
-            + "\n\n## 6. Runtime Evidence References\n"
+            + "\n\n## 6.1 Change Inventory / Runtime Evidence References\n"
             + ("\n".join(f"- {ref}" for ref in evidence) or "- None")
             + "\n"
         )

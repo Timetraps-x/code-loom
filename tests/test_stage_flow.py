@@ -420,9 +420,12 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     verification_summary_ref = next(ref for ref in verify_refs if ref["kind"] == "verification_summary")
     assert verification_summary_ref["content_hash"]
     assert "git_status_complete" in {ref["kind"] for ref in verify_refs}
+    verification = store.verifications_for_attempt(int(verify_attempt["id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == verification_summary_ref["path"]
 
 
-def test_claude_code_host_verify_completion_without_evidence_blocks(tmp_path):
+def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
@@ -438,16 +441,103 @@ def test_claude_code_host_verify_completion_without_evidence_blocks(tmp_path):
         summary="claimed verification",
     )
 
+    assert completed.status == "ok"
+    store = SQLiteStore(repo)
+    attempt = store.attempt(int(verify_begin.extras["attempt_id"]))
+    assert attempt is not None
+    assert attempt["status"] == "verified"
+    refs = store.runtime_refs(int(verify_begin.extras["attempt_id"]))
+    summary_ref = next(ref for ref in refs if ref["kind"] == "verification_summary")
+    assert repo.joinpath(summary_ref["path"]).read_text(encoding="utf-8") == "claimed verification"
+    verification = store.verifications_for_attempt(int(verify_begin.extras["attempt_id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == summary_ref["path"]
+
+
+def test_claude_code_host_verify_completion_without_explicit_summary_still_blocks(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    build_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(verify_begin.extras["attempt_id"]),
+        status="verified",
+    )
+
     assert completed.status == "blocked"
+    assert completed.recommended_next == "/loom-do T2"
+
+
+def test_claude_code_host_verify_completion_blank_summary_still_blocks(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    build_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(verify_begin.extras["attempt_id"]),
+        status="verified",
+        summary="   ",
+    )
+
+    assert completed.status == "blocked"
+    assert completed.recommended_next == "/loom-do T2"
+
+
+def test_claude_code_host_verify_completion_empty_summary_file_still_blocks(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    build_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
+    summary_path = repo / "empty-verification-summary.json"
+    summary_path.write_text("", encoding="utf-8")
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(verify_begin.extras["attempt_id"]),
+        status="verified",
+        verification_summary_file="empty-verification-summary.json",
+    )
+
+    assert completed.status == "blocked"
+    assert completed.recommended_next == "/loom-do T2"
+
+
+def test_claude_code_host_verify_failed_completion_does_not_require_evidence(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    build_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(verify_begin.extras["attempt_id"]),
+        status="failed",
+        summary="verification command failed",
+    )
+
+    assert completed.status == "failed"
     assert completed.recommended_next == "/loom-do T2"
 
     store = SQLiteStore(repo)
     attempt = store.attempt(int(verify_begin.extras["attempt_id"]))
     assert attempt is not None
-    assert attempt["status"] == "blocked"
-    findings = store.findings(int(attempt["branch_session_id"]))
-    assert findings[-1]["kind"] == "execution_blocked"
-
+    assert attempt["status"] == "failed"
 
 def test_claude_code_host_verify_completion_accepts_summary_file(tmp_path):
     repo = _prepare_host_repo(tmp_path)
@@ -473,6 +563,9 @@ def test_claude_code_host_verify_completion_accepts_summary_file(tmp_path):
     summary_ref = next(ref for ref in refs if ref["kind"] == "verification_summary")
     assert repo.joinpath(summary_ref["path"]).read_text(encoding="utf-8") == summary_path.read_text(encoding="utf-8")
     assert summary_ref["content_hash"]
+    verification = store.verifications_for_attempt(int(verify_begin.extras["attempt_id"]))[0]
+    assert verification["status"] == "passed"
+    assert verification["summary_ref"] == summary_ref["path"]
 
 
 def test_claude_code_host_verify_completion_missing_summary_file_keeps_attempt_running(tmp_path):
@@ -597,7 +690,65 @@ def test_claude_code_host_runtime_rejects_completion_after_task_drift(tmp_path):
     drifted = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
 
     assert drifted.status == "failed"
-    assert drifted.errors == ["attempt_not_running"]
+    assert drifted.errors == ["task_changed_during_attempt"]
+    store = SQLiteStore(repo)
+    attempt = store.attempt(int(begin.extras["attempt_id"]))
+    assert attempt is not None
+    assert attempt["status"] == "running"
+    refs = store.runtime_refs(int(begin.extras["attempt_id"]))
+    assert "git_status_complete" not in {ref["kind"] for ref in refs}
+
+
+def test_claude_code_host_runtime_can_begin_new_attempt_after_running_task_drift(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    first_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(tasks_path.read_text(encoding="utf-8").replace("T1:", "T1: changed ", 1), encoding="utf-8")
+
+    drifted_complete = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(first_begin.extras["attempt_id"]),
+        status="implemented",
+    )
+    second_begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert drifted_complete.status == "failed"
+    assert second_begin.status == "ok"
+    assert second_begin.extras["attempt_id"] != first_begin.extras["attempt_id"]
+    assert second_begin.extras["attempt_no"] == 2
+
+    store = SQLiteStore(repo)
+    first_attempt = store.attempt(int(first_begin.extras["attempt_id"]))
+    second_attempt = store.attempt(int(second_begin.extras["attempt_id"]))
+    assert first_attempt is not None
+    assert second_attempt is not None
+    assert first_attempt["status"] == "running"
+    assert second_attempt["status"] == "running"
+
+
+def test_claude_code_host_removed_running_task_does_not_block_other_task_begin(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    first_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T2: Verify host task\n"
+        "  - Lane: verify\n"
+        "  - Complexity: non-trivial\n"
+        "  - Revision: 1\n",
+        encoding="utf-8",
+    )
+
+    other_begin = run_stage(repo, "do", task_id="T2", action="begin")
+
+    assert other_begin.status == "ok"
+    assert other_begin.extras["task_id"] == "T2"
+    store = SQLiteStore(repo)
+    first_attempt = store.attempt(int(first_begin.extras["attempt_id"]))
+    assert first_attempt is not None
+    assert first_attempt["status"] == "running"
 
 
 def test_claude_code_host_runtime_diff_lists_untracked_files_without_content(tmp_path, monkeypatch):
@@ -748,7 +899,7 @@ def test_ship_records_evidence_integrity_gap_for_drifted_runtime_ref(tmp_path):
     assert ref["path"] in release
 
 
-def test_claude_code_host_runtime_redoes_task_after_fingerprint_change(tmp_path):
+def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_rewriting_old_attempt(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     first_begin = run_stage(repo, "do", task_id="T1", action="begin")
@@ -758,7 +909,7 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change(tmp_path)
 
     tasks_path = repo / "specs" / "master" / "tasks.md"
     tasks_path.write_text(
-        tasks_path.read_text(encoding="utf-8").replace("T1:", "T1: changed ", 1),
+        tasks_path.read_text(encoding="utf-8").replace("  - Complexity: small\n", "  - Complexity: small\n  - Revision: 2\n", 1),
         encoding="utf-8",
     )
 
@@ -774,4 +925,59 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change(tmp_path)
     session = store.branch_session("master")
     assert session is not None
     t1_attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
-    assert [attempt["status"] for attempt in t1_attempts] == ["superseded", "implemented"]
+    assert [attempt["status"] for attempt in t1_attempts] == ["implemented", "implemented"]
+
+
+def test_tasks_registration_recommends_ship_when_revisions_unchanged_and_tasks_completed(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    t1_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    assert run_stage(repo, "do", action="complete", attempt_id=str(t1_begin.extras["attempt_id"]), status="implemented").status == "ok"
+    t2_begin = run_stage(repo, "do", task_id="T2", action="begin")
+    assert run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(t2_begin.extras["attempt_id"]),
+        status="verified",
+        summary="verified",
+    ).status == "ok"
+
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8")
+        + "\n\n## 6. Task Notes\n\n### T1: Build host task\n\n- Note: non-semantic evidence prose update\n",
+        encoding="utf-8",
+    )
+
+    registered = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
+
+    assert registered.status == "ok"
+    assert registered.recommended_next == "/loom-ship"
+    assert registered.recommended_task_id is None
+
+
+def test_artifact_drift_finding_resolves_after_artifact_registration(tmp_path):
+    repo = init_repo(tmp_path)
+    write_project_config(repo, runtime="claude-code")
+    _write_host_spec(repo)
+    run_stage(repo, "spec", artifact_file="specs/master/spec.md")
+
+    spec_path = repo / "specs" / "master" / "spec.md"
+    spec_path.write_text("# Spec\n\n## Requirement\nChanged outside registration\n", encoding="utf-8")
+
+    run_stage(repo, "plan")
+
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    findings = store.findings(int(session["id"]))
+    drift = next(finding for finding in findings if finding["kind"] == "artifact_drift")
+    assert drift["status"] == "open"
+
+    registered = run_stage(repo, "spec", artifact_file="specs/master/spec.md")
+
+    assert registered.status == "ok"
+    findings = store.findings(int(session["id"]))
+    drift = next(finding for finding in findings if finding["kind"] == "artifact_drift")
+    assert drift["status"] == "resolved"

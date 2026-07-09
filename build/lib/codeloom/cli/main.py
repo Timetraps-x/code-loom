@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Sequence
 
 from codeloom.app.doctor import run_doctor
+from codeloom.app.constitution import register_constitution
 from codeloom.app.init_project import init_project
 from codeloom.app.request import KernelRequest
 from codeloom.app.response import KernelResponse
 from codeloom.app.stages import StageRunner
 from codeloom.app.status import get_status
-from codeloom.cli.render import emit_data, emit_kernel_response, render_doctor, render_init, render_status
+from codeloom.cli.render import emit_data, emit_kernel_response, render_adopt, render_doctor, render_init, render_status
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -27,6 +28,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     init_parser.add_argument("--codex", action="store_true", help="select Codex integration when supported")
     init_parser.add_argument("--opencode", action="store_true", help="select OpenCode integration when supported")
     _add_output_flags(init_parser)
+
+    adopt_parser = subparsers.add_parser("adopt")
+    adopt_parser.add_argument("--cwd", default=".")
+    adopt_parser.add_argument("--constitution", default=".loom/constitution.md")
+    _add_output_flags(adopt_parser)
 
     subparsers.add_parser("kernel")
 
@@ -60,6 +66,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         emit_data(payload, args.json_output, render_init)
         return 0
+    if args.subcommand == "adopt":
+        try:
+            payload = register_constitution(Path(args.cwd), args.constitution)
+        except ValueError as exc:
+            payload = {"status": "failed", "message": str(exc), "constitution": {}, "errors": [str(exc)]}
+        emit_data(payload, args.json_output, render_adopt)
+        return 0 if payload["status"] == "ok" else 1
     if args.subcommand == "kernel":
         return _run_kernel_stdin()
     if args.subcommand == "stage":

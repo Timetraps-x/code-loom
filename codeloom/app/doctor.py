@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from codeloom.app.claude_plugin import COMMANDS
+from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
 from codeloom.kernel.clients import create_runtime_client
 from codeloom.persistence.migrations import CURRENT_SCHEMA_VERSION
@@ -35,6 +36,16 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
         _add_check(checks, "artifact root", "ok", f"available: {artifact_root}")
     else:
         _add_check(checks, "artifact root", "failed", f"parent missing: {parent}")
+
+    constitution = constitution_status(repo_path, config.constitution_path, config.constitution_hash)
+    if not constitution["exists"]:
+        _add_check(checks, "constitution", "warning", f"missing: {constitution['path']}")
+    elif not constitution["registered_hash"]:
+        _add_check(checks, "constitution", "warning", f"unregistered: {constitution['path']}")
+    elif constitution["matches_registered"]:
+        _add_check(checks, "constitution", "ok", f"registered: {constitution['path']}")
+    else:
+        _add_check(checks, "constitution", "warning", f"hash mismatch: {constitution['path']}")
 
     missing_skills = _missing_skill_files(repo_path)
     if missing_skills:

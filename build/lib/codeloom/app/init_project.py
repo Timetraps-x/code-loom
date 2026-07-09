@@ -5,6 +5,7 @@ from importlib import resources
 from pathlib import Path
 
 from codeloom.app.claude_plugin import install_claude_skills
+from codeloom.app.constitution import register_constitution
 
 from codeloom.persistence.sqlite import SQLiteStore
 
@@ -42,6 +43,10 @@ runtime:
       enabled: {opencode_enabled}
       mode: sdk
 
+constitution:
+  path: .loom/constitution.md
+  hash: ""
+
 commands:
   test: ""
   lint: ""
@@ -53,12 +58,19 @@ rules:
     - CLAUDE.md
     - AGENTS.md
 """
-
 DEFAULT_TEMPLATE_NAMES = (
     "spec-template.md",
     "plan-template.md",
     "tasks-template.md",
     "release-template.md",
+    "constitution-template.md",
+)
+
+DEFAULT_POSITIVE_CASE_NAMES = (
+    "java-spring-mybatis.md",
+    "python-fastapi.md",
+    "react-next.md",
+    "go-http.md",
 )
 
 DEFAULT_AGENT_NAMES = (
@@ -70,6 +82,8 @@ DEFAULT_AGENT_NAMES = (
     "release-analyzer.md",
     "code-reviewer.md",
     "scout.md",
+    "codebase-scout.md",
+    "adopt-expert.md",
     "spec-reviewer.md",
     "plan-reviewer.md",
     "task-reviewer.md",
@@ -81,6 +95,8 @@ class ProjectConfig:
     artifact_root: str = "specs"
     spec_language: str = "en"
     default_runtime: str = "mock"
+    constitution_path: str = ".loom/constitution.md"
+    constitution_hash: str = ""
     commands: dict[str, str] = field(default_factory=lambda: {"test": "", "lint": "", "typecheck": "", "build": ""})
 
 def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None, language: str = "en") -> tuple[bool, str]:
@@ -100,6 +116,9 @@ def init_project(cwd: Path, force: bool = False, integrations: set[str] | None =
         created = True
     (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
     _initialize_templates(repo_path, force=force)
+    _initialize_constitution(repo_path)
+    _initialize_positive_cases(repo_path, force=force)
+    register_constitution(repo_path)
     SQLiteStore(repo_path).initialize()
     if "claude-code" in selected_integrations:
         install_claude_skills(repo_path, force=force)
@@ -123,6 +142,24 @@ def _initialize_templates(repo_path: Path, force: bool = False) -> None:
         destination.write_text(content, encoding="utf-8")
 
 
+def _initialize_constitution(repo_path: Path) -> None:
+    constitution_path = repo_path / ".loom" / "constitution.md"
+    if constitution_path.exists():
+        return
+    content = resources.files("codeloom.templates").joinpath("constitution-template.md").read_text(encoding="utf-8")
+    constitution_path.write_text(content, encoding="utf-8")
+
+def _initialize_positive_cases(repo_path: Path, force: bool = False) -> None:
+    cases_dir = repo_path / ".loom" / "references" / "positive-cases"
+    cases_dir.mkdir(parents=True, exist_ok=True)
+    bundled_cases = resources.files("codeloom.quality_cases.positive")
+    for case_name in DEFAULT_POSITIVE_CASE_NAMES:
+        destination = cases_dir / case_name
+        if destination.exists() and not force:
+            continue
+        content = bundled_cases.joinpath(case_name).read_text(encoding="utf-8")
+        destination.write_text(content, encoding="utf-8")
+
 def _initialize_claude_agents(repo_path: Path, force: bool = False) -> None:
     agents_dir = repo_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -143,6 +180,8 @@ def load_project_config(cwd: Path) -> ProjectConfig:
     spec_language = "en"
     default_runtime = "mock"
     commands = {"test": "", "lint": "", "typecheck": "", "build": ""}
+    constitution_path = ".loom/constitution.md"
+    constitution_hash = ""
     section: str | None = None
     for raw_line in project_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.rstrip()
@@ -158,11 +197,22 @@ def load_project_config(cwd: Path) -> ProjectConfig:
             spec_language = _value(stripped) or "en"
         elif section == "runtime" and stripped.startswith("default:"):
             default_runtime = _value(stripped)
+        elif section == "constitution" and stripped.startswith("path:"):
+            constitution_path = _value(stripped) or ".loom/constitution.md"
+        elif section == "constitution" and stripped.startswith("hash:"):
+            constitution_hash = _value(stripped)
         elif section == "commands" and ":" in stripped:
             key, value = stripped.split(":", 1)
             if key in commands:
                 commands[key] = _clean(value)
-    return ProjectConfig(artifact_root=artifact_root, spec_language=spec_language, default_runtime=default_runtime, commands=commands)
+    return ProjectConfig(
+        artifact_root=artifact_root,
+        spec_language=spec_language,
+        default_runtime=default_runtime,
+        constitution_path=constitution_path,
+        constitution_hash=constitution_hash,
+        commands=commands,
+    )
 
 
 def _value(line: str) -> str:

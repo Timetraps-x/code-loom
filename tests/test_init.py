@@ -14,6 +14,7 @@ AGENT_NAMES = (
     "code-reviewer.md",
     "scout.md",
     "codebase-scout.md",
+    "adopt-expert.md",
     "spec-reviewer.md",
     "plan-reviewer.md",
     "task-reviewer.md",
@@ -44,9 +45,13 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "runtime:\n  default: claude-code" in project_config
     assert "claude-code:\n      enabled: true" in project_config
     assert "mode: host" in project_config
+    assert "constitution:\n  path: .loom/constitution.md\n  hash: " in project_config
+    assert "constitution:\n  path: .loom/constitution.md\n  hash: \"\"" not in project_config
     project_config_data = load_project_config(tmp_path)
     assert project_config_data.spec_language == "en"
     assert project_config_data.default_runtime == "claude-code"
+    assert project_config_data.constitution_path == ".loom/constitution.md"
+    assert project_config_data.constitution_hash
     assert not tmp_path.joinpath("project.yml").exists()
     assert tmp_path.joinpath(".loom", "loom.db").exists()
     assert tmp_path.joinpath(".loom", "runs").exists()
@@ -55,6 +60,17 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert templates_dir.joinpath("plan-template.md").exists()
     assert templates_dir.joinpath("tasks-template.md").exists()
     assert templates_dir.joinpath("release-template.md").exists()
+    assert templates_dir.joinpath("constitution-template.md").exists()
+    constitution_path = tmp_path.joinpath(".loom", "constitution.md")
+    assert constitution_path.exists()
+    constitution_content = constitution_path.read_text(encoding="utf-8")
+    assert "Code Placement and Ownership" in constitution_content
+    assert "Stack-Local Code Shape" in constitution_content
+    positive_cases_dir = tmp_path.joinpath(".loom", "references", "positive-cases")
+    assert positive_cases_dir.joinpath("java-spring-mybatis.md").exists()
+    assert positive_cases_dir.joinpath("python-fastapi.md").exists()
+    assert positive_cases_dir.joinpath("react-next.md").exists()
+    assert positive_cases_dir.joinpath("go-http.md").exists()
     skill_path = tmp_path.joinpath(".claude", "skills", "loom-spec", "SKILL.md")
     assert skill_path.exists()
     content = skill_path.read_text(encoding="utf-8")
@@ -62,6 +78,22 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "user-invocable: true" in content
     assert "disable-model-invocation: false" in content
     assert ".loom/templates/spec-template.md" in content
+    adopt_skill_path = tmp_path.joinpath(".claude", "skills", "loom-adopt", "SKILL.md")
+    assert adopt_skill_path.exists()
+    adopt_content = adopt_skill_path.read_text(encoding="utf-8")
+    assert "adopt-expert" in adopt_content
+    assert "loom adopt --constitution .loom/constitution.md" in adopt_content
+    assert ".loom/templates/constitution-template.md" in adopt_content
+    assert "durable project code-quality rules" in adopt_content
+    assert "separate full constitution per language/framework" in adopt_content
+    assert "positive code-shape cases" in adopt_content
+    assert "update-claude" in adopt_content
+    assert "English by default" in adopt_content
+    assert "downstream prompt surface" in adopt_content
+    assert "classify evidence before writing" in adopt_content
+    assert "AskUserQuestion" in adopt_content
+    assert "promotion, authority, or legacy conflicts" in adopt_content
+    assert "scout` or `codebase-scout`" in adopt_content
     agents_dir = tmp_path.joinpath(".claude", "agents")
     for agent_name in AGENT_NAMES:
         assert agents_dir.joinpath(agent_name).exists()
@@ -95,14 +127,13 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "task-reviewer" in tasks_content
     assert "execution slicing" in tasks_content
     assert "generic large rubric" in tasks_content
-    assert "scout" in tasks_content
     assert "build or verify tasks only" in tasks_content
-    assert "do not create scout" in tasks_content
+    assert "lanes other than `build` or `verify`" in tasks_content
     assert "do not each need independent functional verification" in tasks_content
     assert "Verify tasks may cover multiple naturally related build tasks" in tasks_content
     assert "Missing facts that block safe slicing" in tasks_content
     assert "Do not copy large plan sections" in tasks_content
-    assert "Optional `## Ship inputs` content is non-executable" in tasks_content
+    assert "leave unrelated follow-up outside `tasks.md`" in tasks_content
     assert "builder" in do_content
     assert "code-reviewer" in do_content
     assert "verifier" in do_content
@@ -171,6 +202,17 @@ def test_init_project_preserves_existing_templates_without_force(tmp_path):
     assert plan_template.read_text(encoding="utf-8") == "custom plan template"
 
 
+def test_init_project_does_not_overwrite_existing_constitution(tmp_path):
+    init_project(tmp_path)
+    constitution_path = tmp_path.joinpath(".loom", "constitution.md")
+    constitution_path.write_text("# Custom Constitution\n\nProject-specific rules.\n", encoding="utf-8")
+
+    init_project(tmp_path, force=True)
+
+    assert constitution_path.read_text(encoding="utf-8") == "# Custom Constitution\n\nProject-specific rules.\n"
+    assert load_project_config(tmp_path).constitution_hash
+
+
 def test_init_project_force_overwrites_existing_templates(tmp_path):
     init_project(tmp_path)
     plan_template = tmp_path.joinpath(".loom", "templates", "plan-template.md")
@@ -222,10 +264,15 @@ def test_bundled_agent_resources_are_packaged():
                 assert "Produce clean" in content
                 assert "Do not include agent process notes" in content
                 assert "bounded clarification" in content
+            if agent_name == "plan-architect.md":
+                assert "Matching stack material under `.loom/references/positive-cases/`" in content
+                assert "languages and frameworks actually present" in content
+                assert "never copy constitution or positive-case text into the plan" in content
+                assert "do not use stack material to add new requirements or broaden plan scope" in content
             if agent_name == "task-planner.md":
                 assert "Every executable task must be either" in content
                 assert "A build task does not need to independently prove the whole feature works" in content
-                assert "## Ship inputs" in content
+                assert "Ship inputs" not in content
                 assert "Do not copy large plan sections" in content
                 assert "verification coverage map" in content
                 assert "full verify task set collectively covers requested behavior and material impacted regression surfaces" in content
@@ -242,6 +289,9 @@ def test_bundled_agent_resources_are_packaged():
             assert "reasonable content density" in content
             assert "repeated `collectXxx(...)` helper traversals" in content
             assert "stable reusable capability" in content
+            assert "`.loom/references/positive-cases/`" in content
+            assert "actual project stack" in content
+            assert "not as a source of new task scope" in content
         if agent_name == "verifier.md":
             assert "verify-lane main agent" in content
             assert "revise_spec_plan_tasks" in content
@@ -260,6 +310,9 @@ def test_bundled_agent_resources_are_packaged():
             assert "query_naming_risk" in content
             assert "full-sentence method or test names" in content
             assert "concise behavior names" in content
+            assert "`.loom/references/positive-cases/`" in content
+            assert "actual project stack" in content
+            assert "Stack-material findings" in content
         if agent_name == "scout.md":
             assert "bounded specialist evidence agent supporting a CodeLoom main agent" in content
             assert "codebase mode" in content
@@ -280,6 +333,11 @@ def test_bundled_agent_resources_are_packaged():
             assert "reusable data-access capabilities" in content
             assert "SQL/query naming conventions" in content
             assert "visible N+1 or repeated-query risks" in content
+        if agent_name == "adopt-expert.md":
+            assert ".loom/constitution.md" in content
+            assert "project constitution / quality baseline" in content
+            assert "Do not generate a project encyclopedia" in content
+            assert "CLAUDE.md suggestions" in content
         if agent_name in REVIEWER_AGENTS:
             assert "Do not" in content
             assert REVIEWER_AGENTS[agent_name] in content
