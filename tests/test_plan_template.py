@@ -79,7 +79,7 @@ def test_templates_preserve_coding_goal_anchors():
 
     for expected in (
         "Not Verified",
-        "Change Inventory",
+        "Attempt Changes / Runtime Evidence",
         "Risks can be accepted only when the user or release owner explicitly accepted them",
         "ready_for_release",
         "blockers",

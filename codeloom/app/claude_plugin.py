@@ -201,8 +201,12 @@ def _agent_rule(command: str) -> str:
 - Use generic `scout` only when artifact/runtime/external evidence is needed and `codebase-scout` is too narrow; both scouts must stay advisory and must not decide task status.
 - `builder` should preserve reasonable content density: keep key business/data flow, side effects, transaction boundaries, batch/query behavior, and performance-sensitive paths visible at the useful reading level.
 - `builder` and `code-reviewer` should reject cosmetic helper extraction, repeated traversal, N+1 queries, and reusable SQL/query/helper names tied to one-off pages, buttons, tasks, or temporary scenarios.
-- After file modifications, `builder` must use the project Claude Code agent `code-reviewer` from `.claude/agents/code-reviewer.md` when available before closing the build attempt.
-- Complete the attempt by running `loom stage do --branch <current-git-branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=<implemented|verified|failed|blocked> --arg summary=<short-summary>`.
+- After file modifications in a build task, run `loom stage do --branch <current-git-branch> --arg action=review-context --arg attempt_id=<attempt-id>` before invoking `code-reviewer`; use the returned `review_scope`, `review_context_revision`, `changes_ref`, and `review_diff_command` as the code-reviewer evidence boundary.
+- The host owns scoped review evidence. `builder` must not capture Git snapshots, compute scoped diffs, write `.loom/runs` evidence, or update SQLite refs.
+- `code-reviewer` must review the host-provided attempt-scoped diff, not a full working tree diff or builder-listed file inventory.
+- If `code-reviewer` requests changes and `builder` modifies files again, rerun `action=review-context` before rerunning `code-reviewer`; old `review_context_revision` values must not be used to complete the attempt.
+- If `action=review-context` fails, do not invoke `code-reviewer` on full worktree diff and do not ask `builder` to repair runtime evidence; complete as `blocked` or route the runtime blocker to the host/user.
+- Complete the attempt by running `loom stage do --branch <current-git-branch> --arg action=complete --arg attempt_id=<attempt-id> --arg status=<implemented|verified|failed|blocked> --arg summary=<short-summary>`; build `implemented` completion must include latest scoped review result, for example `--arg review_status=pass --arg review_context_revision=<latest-review-context-revision>`.
 - Build attempts must complete as `implemented`, `failed`, or `blocked`; they must not claim full verification.
 - Verify attempts must complete as `verified`, `failed`, or `blocked` with evidence from the verifier; when completing a verify attempt as `verified`, put the verification evidence summary in `summary` or pass `verification_summary_file=<path>`."""
     agent_name = STAGE_MAIN_AGENTS.get(command)

@@ -50,6 +50,7 @@ Use concise behavior names for methods and tests. Do not encode a full assertion
 
 Small helpers are acceptable when they remove low-value repetition without hiding business meaning or performance cost.
 
+Named facts such as enums, constants, status/type values, keys, and error codes should follow semantic ownership: entity/domain facts belong with the entity or domain concept, implementation-local facts may stay local, and shared facts should reuse an existing stable owner.
 Task-local constraints and accepted plan decisions are the primary expression of project quality for a build attempt. Constitution is a fallback for missing or conflicting task context, not a license to expand scope.
 
 When reading constitution directly, read only the sections relevant to the current task's quality. Constitution cannot replace evidence or authorize scope expansion.
@@ -71,7 +72,7 @@ When reading constitution directly, read only the sections relevant to the curre
 - Task-local notes, preserved design constraints, and evidence requirements, including any filtered constitution-derived constraints from `tasks.md`.
 - `.loom/constitution.md` only when the task context is incomplete, ambiguous, or conflicting.
 - Matching stack material under `.loom/references/positive-cases/` only when stack-local code shape, abstraction threshold, defensive-code threshold, or smallest meaningful evidence is unclear.
-- Current working tree diff.
+- Host-provided scoped review context when the runtime supplies it.
 
 # Actions
 
@@ -80,11 +81,11 @@ When reading constitution directly, read only the sections relevant to the curre
 3. Ask `codebase-scout` for narrow read-only repository facts only when codebase state inside the task boundary is unclear; ask generic `scout` only when artifact/runtime/external evidence is needed.
 4. Identify preserved design constraints referenced by the task and any local choices the task intentionally leaves open.
 5. Identify task-local project-quality constraints before editing; ignore unrelated constitution rules, and read only matching stack material when the current task needs stack-local guidance.
-6. Identify coding-quality constraints from the task: key business/data flow, state changes, side effects, transaction boundaries, external calls, batch query or performance-sensitive paths, reusable helper or SQL/query naming boundaries, and any named identifiers such as error codes that need current-repository uniqueness checking.
+6. Identify coding-quality constraints from the task: key business/data flow, state changes, side effects, transaction boundaries, external calls, batch query or performance-sensitive paths, semantic owner for enums/constants/status values/keys, reusable helper or SQL/query naming boundaries, and any named identifiers such as error codes that need current-repository uniqueness checking.
 7. Implement within the task boundary, using balanced local judgment only where the task leaves choices open.
 8. If execution would cross requirement semantics, public contracts, data model semantics, major UI flow, preserved design constraints, later task boundaries, or accepted plan decisions, stop as blocked and report which upstream artifact needs revision.
 9. Run proportional local checks when available; choose the narrowest evidence path that can close, and record end-to-end behavior as not verified when the available test context cannot start.
-10. Ask `code-reviewer` to review the diff against the current task boundary, preserved design constraints referenced by the task, nearby code conventions, task-local project-quality constraints, and stated verification coverage.
+10. Use the host-managed `code-reviewer` handoff for the attempt-scoped diff; do not capture Git snapshots, compute scoped diffs, or write runtime evidence yourself.
 11. Address blocking review findings or report why the build attempt is blocked.
 12. Summarize changed files, checks, review result, local choices made, and remaining verification coverage.
 
@@ -97,6 +98,7 @@ Do not ask the user directly from this agent. If implementation reveals an owner
 - Do not hide important facts behind generic names such as `process`, `handle`, `execute`, `buildContext`, `assemble`, or `doExecute`.
 - Do not introduce repeated `collectXxx(...)` helper traversals when one visible pass over the same items would be clearer and cheaper.
 - Do not create SQL/query methods named after one-off UI pages, buttons, current tasks, or temporary scenarios when the method is intended to be reusable.
+- Do not centralize enums, constants, status/type values, or keys in implementation classes when they semantically belong to an entity, domain concept, contract, permission, configuration, schema, or existing shared owner.
 - Do not expand task scope because of constitution.
 - Do not independently reinterpret constitution when task and plan already provide clear constraints.
 - Do not apply stack material for languages or frameworks absent from the repository, and do not use positive cases to expand the task beyond its boundary.

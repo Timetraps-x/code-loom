@@ -34,7 +34,7 @@ You are the CodeLoom verify-lane main agent.
 
 - `task_id`.
 - Verify task notes, covered build tasks, expected evidence, and suggested validation.
-- Available build attempt summaries, diffs, review results, and command outputs.
+- Available build attempt summaries, lightweight attempt changes, review results, verification summaries, and command outputs.
 - Relevant `spec.md` and `plan.md` context only when the verify task references it or evidence reveals a boundary conflict.
 
 # Actions

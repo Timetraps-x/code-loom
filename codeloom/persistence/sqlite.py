@@ -28,6 +28,7 @@ class SQLiteStore:
             for statement in SCHEMA:
                 conn.execute(statement)
             self._migrate_branch_sessions(conn)
+            self._migrate_attempts(conn)
             self._migrate_runtime_refs(conn)
             self._migrate_verifications(conn)
             conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
@@ -56,6 +57,14 @@ class SQLiteStore:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(branch_sessions)").fetchall()}
         if "recommended_task_id" not in columns:
             conn.execute("ALTER TABLE branch_sessions ADD COLUMN recommended_task_id TEXT")
+
+    def _migrate_attempts(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+        for column in ("start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_tree", "latest_review_status", "latest_changes_ref"):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
+        if columns and "latest_review_context_revision" not in columns:
+            conn.execute("ALTER TABLE attempts ADD COLUMN latest_review_context_revision INTEGER NOT NULL DEFAULT 0")
 
     def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
@@ -218,16 +227,35 @@ class SQLiteStore:
         plan_hash: str | None,
         tasks_hash: str | None,
         task_fingerprint: str | None,
+        start_tree: str | None = None,
+        start_head: str | None = None,
+        snapshot_semantics: str | None = None,
+        start_status_json: str | None = None,
     ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO attempts
                     (branch_session_id, task_id, attempt_no, runtime, based_on_spec_hash,
-                     based_on_plan_hash, based_on_tasks_hash, task_fingerprint, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
+                     based_on_plan_hash, based_on_tasks_hash, task_fingerprint, start_tree,
+                     start_head, snapshot_semantics, start_status_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
                 """,
-                (session_id, task_id, attempt_no, runtime, spec_hash, plan_hash, tasks_hash, task_fingerprint, utc_now()),
+                (
+                    session_id,
+                    task_id,
+                    attempt_no,
+                    runtime,
+                    spec_hash,
+                    plan_hash,
+                    tasks_hash,
+                    task_fingerprint,
+                    start_tree,
+                    start_head,
+                    snapshot_semantics,
+                    start_status_json,
+                    utc_now(),
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -236,6 +264,30 @@ class SQLiteStore:
             conn.execute(
                 "UPDATE attempts SET status = ?, summary = ?, updated_at = ? WHERE id = ?",
                 (status, summary, utc_now(), attempt_id),
+            )
+
+    def record_review_context(self, attempt_id: int, review_tree: str, changes_ref: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT latest_review_context_revision FROM attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            revision = int(row["latest_review_context_revision"] or 0) + 1
+            conn.execute(
+                """
+                UPDATE attempts
+                SET latest_review_tree = ?, latest_review_context_revision = ?, latest_review_status = ?, latest_changes_ref = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (review_tree, revision, "pending", changes_ref, utc_now(), attempt_id),
+            )
+            return revision
+
+    def update_review_status(self, attempt_id: int, status: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE attempts SET latest_review_status = ?, updated_at = ? WHERE id = ?",
+                (status, utc_now(), attempt_id),
             )
 
     def supersede_attempt(self, attempt_id: int, summary: str | None = None) -> None:
@@ -365,6 +417,18 @@ class SQLiteStore:
 
     def add_runtime_ref(self, attempt_id: int, kind: str, path: str, content_hash: str | None = None) -> int:
         with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (attempt_id, kind, path, content_hash, utc_now()),
+            )
+            return int(cursor.lastrowid)
+
+    def replace_runtime_ref(self, attempt_id: int, kind: str, path: str, content_hash: str | None = None) -> int:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM runtime_refs WHERE attempt_id = ? AND kind = ?", (attempt_id, kind))
             cursor = conn.execute(
                 """
                 INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at)

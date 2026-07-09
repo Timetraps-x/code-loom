@@ -19,7 +19,7 @@ ship   release.md 交付结论
 - `spec.md` 描述需求语义和可观察的验收标准。
 - `plan.md` 描述设计事实、约束、风险和验证策略，不负责 do 阶段任务拆分。
 - `tasks.md` 将 plan 中的设计事实投影为可执行的 build / verify 任务边界，并用 Verification Coverage Map 覆盖当前需求和关键回归面。
-- `do` 只执行当前 task，并把 runtime 输出、diff、git status 快照和验证证据记录到 SQLite / `.loom/runs/`。
+- `do` 只执行当前 task，并把推进当前 Loom 生命周期所需的最小辅助 evidence 记录到 SQLite / `.loom/runs/`，包括 attempt changes、runtime logs 和可用的验证摘要。
 - `ship` 生成 `release.md`，汇总完成情况、证据和剩余风险。
 
 ## 项目布局
@@ -32,13 +32,13 @@ ship   release.md 交付结论
 .claude/agents/*.md         # CodeLoom stage / do agents
 .loom/templates/            # 项目可定制 artifact 模板
 .loom/loom.db               # 本地 SQLite runtime state
-.loom/runs/<branch_slug>/   # do attempt evidence
+.loom/runs/<branch_slug>/   # 当前 lifecycle 的 do attempt 辅助 evidence
 specs/<branch_slug>/        # spec.md / plan.md / tasks.md / release.md
 ```
 
 `.loom/templates/` 是项目模板区，可以按项目直接修改或替换。再次执行 `loom init` 不覆盖已有模板，除非传 `--force`。
 
-`.loom/project.yml`、`.loom/loom.db` 和 `.loom/runs/` 是本地项目配置与运行时状态；`specs/<branch_slug>/` 是交付类 Markdown artifact。
+`.loom/project.yml`、`.loom/loom.db` 和 `.loom/runs/` 是本地项目配置与运行时状态；`.loom/runs/` 保存推进当前 Loom 生命周期所需的最小辅助 evidence，不是长期审计归档或源码副本；`specs/<branch_slug>/` 是交付类 Markdown artifact。
 
 ## specs 交付文档语言
 
@@ -142,7 +142,7 @@ loom doctor
 - build task 成功后记录为 `implemented`；verify task 成功后记录为 `verified`。
 - verify task 必须有 evidence；缺少 evidence 的 `verified` claim 会被降级为 `blocked`。
 - blocked attempt 可以显式 retry 同一个 task，不需要改 `tasks.md`；有 open blocking finding 时，其他 task 仍会被阻塞。
-- do-attempt evidence 包含 diff、change inventory、带 `cwd` 的 git status begin/complete 快照，以及可选的 `verification_summary` / `verification_summary_file` 内容。
+- do-attempt evidence 包含轻量 `attempt-changes.json`、非空 runtime stdout/stderr logs，以及可选的 `verification_summary` / `verification_summary_file` 内容；默认不持久化 patch 文件或完整 git status 快照。
 - do 阶段使用当前 task 作为直接执行边界；只有 task 指向、上下文不清或发现冲突时，才回读 `spec.md` / `plan.md`。
 
 ## 验证

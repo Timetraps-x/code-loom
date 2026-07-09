@@ -47,10 +47,37 @@ def _register_host_artifacts(repo, branch="master"):
     run_stage(repo, "tasks", branch=branch, artifact_file=f"specs/{branch}/tasks.md")
 
 
+def _init_git_repo(repo):
+    subprocess.run(["git", "init", "-b", "master"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True)
+
+
+def _commit_all(repo, message="initial"):
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True)
+
+
+def _complete_build_with_passed_review(repo, attempt_id, **kwargs):
+    review = run_stage(repo, "do", action="review-context", attempt_id=str(attempt_id))
+    assert review.status == "ok"
+    return run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(attempt_id),
+        status="implemented",
+        review_status="pass",
+        review_context_revision=str(review.extras["review_context_revision"]),
+        **kwargs,
+    )
+
 def _prepare_host_repo(tmp_path):
     repo = init_repo(tmp_path)
     write_project_config(repo, runtime="claude-code")
     _register_host_artifacts(repo)
+    _init_git_repo(repo)
+    _commit_all(repo)
     return repo
 
 
@@ -277,6 +304,8 @@ def test_claude_code_host_preregistered_artifacts_refresh_lineage_on_registratio
     tasks = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
     assert tasks.status == "ok"
     assert tasks.recommended_next == "/loom-do T1"
+    _init_git_repo(repo)
+    _commit_all(repo)
 
     begin = run_stage(repo, "do", action="begin", task_id="T1")
 
@@ -356,7 +385,8 @@ def test_mock_runtime_skips_empty_stderr_and_empty_verify_logs(tmp_path):
     t2 = next(attempt for attempt in attempts if attempt["task_id"] == "T2")
 
     t1_refs = store.runtime_refs(int(t1["id"]))
-    assert [ref["kind"] for ref in t1_refs] == ["diff", "stdout"]
+    assert [ref["kind"] for ref in t1_refs] == ["stdout"]
+    assert not (repo / ".loom" / "runs" / "master" / "T1-a001-diff.patch").exists()
     assert not (repo / ".loom" / "runs" / "master" / "T1-a001-runtime.stderr.log").exists()
 
     verification = store.verifications_for_attempt(int(t2["id"]))[0]
@@ -385,7 +415,7 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     repeated_begin = run_stage(repo, "do", task_id="T1", action="begin")
     assert repeated_begin.extras["attempt_id"] == begin.extras["attempt_id"]
 
-    complete_build = run_stage(repo, "do", action="complete", attempt_id=attempt_id, status="implemented", summary="built T1")
+    complete_build = _complete_build_with_passed_review(repo, attempt_id, summary="built T1")
     assert complete_build.status == "ok"
     assert complete_build.recommended_next == "/loom-do T2"
     assert complete_build.recommended_task_id == "T2"
@@ -413,23 +443,168 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     build_attempt = next(attempt for attempt in attempts if attempt["task_id"] == "T1")
     build_refs = store.runtime_refs(int(build_attempt["id"]))
     build_ref_kinds = {ref["kind"] for ref in build_refs}
-    assert "git_status_begin" in build_ref_kinds
-    assert "git_status_complete" in build_ref_kinds
+    assert "attempt_changes" in build_ref_kinds
+    assert {"git_status_begin", "git_status_complete", "diff", "change_inventory"}.isdisjoint(build_ref_kinds)
     verify_attempt = next(attempt for attempt in attempts if attempt["task_id"] == "T2")
     verify_refs = store.runtime_refs(int(verify_attempt["id"]))
+    verify_ref_kinds = {ref["kind"] for ref in verify_refs}
     verification_summary_ref = next(ref for ref in verify_refs if ref["kind"] == "verification_summary")
     assert verification_summary_ref["content_hash"]
-    assert "git_status_complete" in {ref["kind"] for ref in verify_refs}
+    assert {"git_status_begin", "git_status_complete", "diff", "change_inventory"}.isdisjoint(verify_ref_kinds)
     verification = store.verifications_for_attempt(int(verify_attempt["id"]))[0]
     assert verification["status"] == "passed"
     assert verification["summary_ref"] == verification_summary_ref["path"]
+
+
+def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    tracked = repo / "tracked.txt"
+    tracked.write_text("before\n", encoding="utf-8")
+    _commit_all(repo, "add tracked file")
+
+    tracked.write_text("after\n", encoding="utf-8")
+    (repo / "untracked.txt").write_text("new\n", encoding="utf-8")
+    index_before = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, check=True, capture_output=True, text=True).stdout
+
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert begin.status == "ok"
+    index_after = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    assert index_after == index_before
+
+    store = SQLiteStore(repo)
+    attempt = store.attempt(int(begin.extras["attempt_id"]))
+    assert attempt is not None
+    assert attempt["snapshot_semantics"] == "working_tree_content"
+    assert attempt["start_head"]
+    assert attempt["start_tree"]
+    status_summary = json.loads(attempt["start_status_json"])
+    assert " M tracked.txt" in status_summary["git_status_short"]
+    assert "?? untracked.txt" in status_summary["git_status_short"]
+
+
+def test_claude_code_review_context_writes_attempt_changes(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    before_begin = repo / "before-begin.txt"
+    before_begin.write_text("pre-existing\n", encoding="utf-8")
+
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    assert begin.status == "ok"
+
+    (repo / "tracked-after.txt").write_text("before\n", encoding="utf-8")
+    _commit_all(repo, "add tracked-after")
+    (repo / "tracked-after.txt").write_text("after\n", encoding="utf-8")
+    (repo / "untracked-after.txt").write_text("new\n", encoding="utf-8")
+
+    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+
+    assert review.status == "ok"
+    assert review.extras["review_scope"] == "attempt_scoped"
+    assert review.extras["review_context_revision"] == 1
+    assert "git diff --no-ext-diff --no-textconv" in review.extras["review_diff_command"]
+
+    store = SQLiteStore(repo)
+    attempt = store.attempt(int(begin.extras["attempt_id"]))
+    assert attempt is not None
+    assert attempt["latest_review_tree"] == review.extras["review_tree"]
+    assert attempt["latest_review_context_revision"] == 1
+    assert attempt["latest_review_status"] == "pending"
+    assert attempt["latest_changes_ref"] == review.extras["changes_ref"]
+
+    refs = store.runtime_refs(int(begin.extras["attempt_id"]))
+    changes_ref = next(ref for ref in refs if ref["kind"] == "attempt_changes")
+    changes = json.loads(repo.joinpath(changes_ref["path"]).read_text(encoding="utf-8"))
+    paths = {item["path"] for item in changes["files"]}
+    assert "tracked-after.txt" in paths
+    assert "untracked-after.txt" in paths
+    assert "before-begin.txt" not in paths
+    for item in changes["files"]:
+        assert {"old_mode", "new_mode", "old_oid", "new_oid"} <= item.keys()
+    assert changes["review"]["patch_persisted"] is False
+    assert not list((repo / ".loom" / "runs" / "master").glob("*-attempt-diff.patch"))
+
+    second = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    assert second.extras["review_context_revision"] == 2
+    assert len([ref for ref in store.runtime_refs(int(begin.extras["attempt_id"])) if ref["kind"] == "attempt_changes"]) == 1
+
+
+def test_claude_code_build_implemented_requires_review_context(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
+
+    assert completed.status == "blocked"
+    assert completed.errors == ["review_context_missing"]
+    attempt = SQLiteStore(repo).attempt(int(begin.extras["attempt_id"]))
+    assert attempt is not None
+    assert attempt["status"] == "running"
+
+
+def test_claude_code_build_implemented_requires_passed_review(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+        review_status="changes_requested",
+        review_context_revision=str(review.extras["review_context_revision"]),
+    )
+
+    assert completed.status == "blocked"
+    assert completed.errors == ["review_not_passed"]
+
+
+def test_claude_code_build_implemented_rejects_stale_review_context(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    (repo / "after-review.txt").write_text("changed\n", encoding="utf-8")
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+        review_status="pass",
+        review_context_revision=str(review.extras["review_context_revision"]),
+    )
+
+    assert completed.status == "blocked"
+    assert completed.errors == ["review_context_stale"]
+
+
+def test_claude_code_build_implemented_rejects_review_revision_mismatch(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+        review_status="pass",
+        review_context_revision="1",
+    )
+
+    assert completed.status == "blocked"
+    assert completed.errors == ["review_context_revision_mismatch"]
 
 
 def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
 
     completed = run_stage(
@@ -458,7 +633,7 @@ def test_claude_code_host_verify_completion_without_explicit_summary_still_block
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
 
     completed = run_stage(
@@ -477,7 +652,7 @@ def test_claude_code_host_verify_completion_blank_summary_still_blocks(tmp_path)
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
 
     completed = run_stage(
@@ -497,7 +672,7 @@ def test_claude_code_host_verify_completion_empty_summary_file_still_blocks(tmp_
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
     summary_path = repo / "empty-verification-summary.json"
     summary_path.write_text("", encoding="utf-8")
@@ -519,7 +694,7 @@ def test_claude_code_host_verify_failed_completion_does_not_require_evidence(tmp
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
 
     completed = run_stage(
@@ -543,7 +718,7 @@ def test_claude_code_host_verify_completion_accepts_summary_file(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
     summary_path = repo / "verification-summary-input.json"
     summary_path.write_text('{"status":"verified","command":"targeted"}', encoding="utf-8")
@@ -572,7 +747,7 @@ def test_claude_code_host_verify_completion_missing_summary_file_keeps_attempt_r
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
 
     completed = run_stage(
@@ -621,7 +796,7 @@ def test_claude_code_host_runtime_rejects_wrong_lane_success_status(tmp_path):
     assert build_wrong.status == "failed"
     assert build_wrong.errors == ["invalid_completion_status"]
 
-    build_ok = run_stage(repo, "do", action="complete", attempt_id=str(build_begin.extras["attempt_id"]), status="implemented")
+    build_ok = _complete_build_with_passed_review(repo, build_begin.extras["attempt_id"])
     assert build_ok.status == "ok"
 
     verify_begin = run_stage(repo, "do", task_id="T2", action="begin")
@@ -635,7 +810,7 @@ def test_claude_code_host_runtime_rejects_duplicate_complete(tmp_path):
 
     begin = run_stage(repo, "do", task_id="T1", action="begin")
     attempt_id = str(begin.extras["attempt_id"])
-    first = run_stage(repo, "do", action="complete", attempt_id=attempt_id, status="implemented")
+    first = _complete_build_with_passed_review(repo, attempt_id)
     assert first.status == "ok"
 
     duplicate = run_stage(repo, "do", action="complete", attempt_id=attempt_id, status="implemented")
@@ -751,94 +926,38 @@ def test_claude_code_host_removed_running_task_does_not_block_other_task_begin(t
     assert first_attempt["status"] == "running"
 
 
-def test_claude_code_host_runtime_diff_lists_untracked_files_without_content(tmp_path, monkeypatch):
+def test_claude_code_host_runtime_does_not_persist_legacy_evidence(tmp_path):
     repo = _prepare_host_repo(tmp_path)
-    untracked_file = repo / "untracked-note.txt"
-    untracked_file.write_text("SENTINEL_UNTRACKED_CONTENT", encoding="utf-8")
+    (repo / "untracked-note.txt").write_text("SENTINEL_UNTRACKED_CONTENT", encoding="utf-8")
 
-    def fake_run(command, cwd=None, capture_output=False, text=False):
-        if command == ["git", "diff", "--"]:
-            return subprocess.CompletedProcess(command, 0, "", "")
-        if command == ["git", "status", "--short"]:
-            return subprocess.CompletedProcess(command, 0, "?? untracked-note.txt\n", "")
-        raise AssertionError(command)
-
-    monkeypatch.setattr("codeloom.app.stages.subprocess.run", fake_run)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
-    assert completed.status == "ok"
+    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="blocked")
 
-    store = SQLiteStore(repo)
-    refs = store.runtime_refs(int(begin.extras["attempt_id"]))
-    diff_ref = next(ref for ref in refs if ref["kind"] == "diff")
-    diff_content = repo.joinpath(diff_ref["path"]).read_text(encoding="utf-8")
-    assert "untracked-note.txt" in diff_content
-    assert "SENTINEL_UNTRACKED_CONTENT" not in diff_content
-    inventory_ref = next(ref for ref in refs if ref["kind"] == "change_inventory")
-    inventory = json.loads(repo.joinpath(inventory_ref["path"]).read_text(encoding="utf-8"))
-    assert inventory["task_id"] == "T1"
-    assert inventory["attempt_no"] == 1
-    assert inventory["untracked_new"] == ["untracked-note.txt"]
-    assert inventory_ref["content_hash"]
-    complete_snapshot_ref = next(ref for ref in refs if ref["kind"] == "git_status_complete")
-    complete_snapshot = json.loads(repo.joinpath(complete_snapshot_ref["path"]).read_text(encoding="utf-8"))
-    assert complete_snapshot["phase"] == "complete"
-    assert complete_snapshot["cwd"] == str(repo)
-    assert complete_snapshot["git_status_short"] == ["?? untracked-note.txt"]
-
-def test_claude_code_host_git_status_failure_records_error_without_blocking(tmp_path, monkeypatch):
-    repo = _prepare_host_repo(tmp_path)
-
-    def fake_run(command, cwd=None, capture_output=False, text=False):
-        if command == ["git", "diff", "--"]:
-            return subprocess.CompletedProcess(command, 0, "", "")
-        if command == ["git", "status", "--short"]:
-            return subprocess.CompletedProcess(command, 128, "", "not a git repo")
-        raise AssertionError(command)
-
-    monkeypatch.setattr("codeloom.app.stages.subprocess.run", fake_run)
-    begin = run_stage(repo, "do", task_id="T1", action="begin")
-    assert begin.status == "ok"
-    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
-    assert completed.status == "ok"
-
-    store = SQLiteStore(repo)
-    refs = store.runtime_refs(int(begin.extras["attempt_id"]))
-    begin_snapshot_ref = next(ref for ref in refs if ref["kind"] == "git_status_begin")
-    begin_snapshot = json.loads(repo.joinpath(begin_snapshot_ref["path"]).read_text(encoding="utf-8"))
-    assert begin_snapshot["error"] == "not a git repo"
-    assert begin_snapshot["git_status_short"] == []
-    complete_snapshot_ref = next(ref for ref in refs if ref["kind"] == "git_status_complete")
-    complete_snapshot = json.loads(repo.joinpath(complete_snapshot_ref["path"]).read_text(encoding="utf-8"))
-    assert complete_snapshot["error"] == "not a git repo"
-
-def test_claude_code_host_runtime_skips_empty_evidence_files(tmp_path, monkeypatch):
-    repo = _prepare_host_repo(tmp_path)
-
-    def fake_run(command, cwd=None, capture_output=False, text=False):
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr("codeloom.app.stages.subprocess.run", fake_run)
-    begin = run_stage(repo, "do", task_id="T1", action="begin")
-    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
-    assert completed.status == "ok"
+    assert completed.status == "blocked"
 
     store = SQLiteStore(repo)
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
     kinds = {ref["kind"] for ref in refs}
-    assert {"git_status_begin", "git_status_complete", "change_inventory"}.issubset(kinds)
-    inventory_ref = next(ref for ref in refs if ref["kind"] == "change_inventory")
-    inventory = json.loads(repo.joinpath(inventory_ref["path"]).read_text(encoding="utf-8"))
-    assert inventory["task_id"] == "T1"
-    assert inventory["attempt_no"] == 1
-    assert inventory["tracked_modified"] == []
-    assert inventory["untracked_new"] == []
-    assert inventory_ref["content_hash"]
-    begin_snapshot_ref = next(ref for ref in refs if ref["kind"] == "git_status_begin")
-    begin_snapshot = json.loads(repo.joinpath(begin_snapshot_ref["path"]).read_text(encoding="utf-8"))
-    assert begin_snapshot["phase"] == "begin"
-    assert begin_snapshot["cwd"] == str(repo)
+    assert {"diff", "change_inventory", "git_status_begin", "git_status_complete"}.isdisjoint(kinds)
+    run_dir = repo / ".loom" / "runs" / "master"
+    assert not list(run_dir.glob("*-diff.patch"))
+    assert not list(run_dir.glob("*-attempt-diff.patch"))
+    assert not list(run_dir.glob("*-change-inventory.json"))
+    assert not list(run_dir.glob("*-git-status-begin.json"))
+    assert not list(run_dir.glob("*-git-status-complete.json"))
 
+
+def test_claude_code_host_runtime_skips_empty_evidence_files(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="blocked")
+
+    assert completed.status == "blocked"
+
+    store = SQLiteStore(repo)
+    refs = store.runtime_refs(int(begin.extras["attempt_id"]))
+    assert refs == []
 
 def test_claude_code_host_runtime_writes_explicit_non_empty_logs(tmp_path, monkeypatch):
     repo = _prepare_host_repo(tmp_path)
@@ -846,23 +965,24 @@ def test_claude_code_host_runtime_writes_explicit_non_empty_logs(tmp_path, monke
     def fake_run(command, cwd=None, capture_output=False, text=False):
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr("codeloom.app.stages.subprocess.run", fake_run)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
+    monkeypatch.setattr("codeloom.app.stages.subprocess.run", fake_run)
     completed = run_stage(
         repo,
         "do",
         action="complete",
         attempt_id=str(begin.extras["attempt_id"]),
-        status="implemented",
+        status="blocked",
         stdout="explicit stdout",
         stderr="explicit stderr",
     )
-    assert completed.status == "ok"
+    assert completed.status == "blocked"
 
     store = SQLiteStore(repo)
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
     kinds = {ref["kind"] for ref in refs}
-    assert {"stdout", "stderr", "change_inventory", "git_status_begin", "git_status_complete"}.issubset(kinds)
+    assert {"stdout", "stderr"}.issubset(kinds)
+    assert {"diff", "change_inventory", "git_status_begin", "git_status_complete"}.isdisjoint(kinds)
     for ref in refs:
         if ref["kind"] in {"stdout", "stderr"}:
             assert repo.joinpath(ref["path"]).read_text(encoding="utf-8") == f"explicit {ref['kind']}"
@@ -895,7 +1015,7 @@ def test_ship_records_evidence_integrity_gap_for_drifted_runtime_ref(tmp_path):
     release = repo.joinpath("specs", "master", "release.md").read_text(encoding="utf-8")
     assert "### 4.1 Not Verified / Readiness Blockers" in release
     assert "runtime ref hash mismatch" in release
-    assert "## 6.1 Change Inventory / Runtime Evidence References" in release
+    assert "## 6.1 Attempt Changes / Runtime Evidence" in release
     assert ref["path"] in release
 
 
@@ -904,7 +1024,7 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_r
 
     first_begin = run_stage(repo, "do", task_id="T1", action="begin")
     first_attempt_id = first_begin.extras["attempt_id"]
-    first_complete = run_stage(repo, "do", action="complete", attempt_id=str(first_attempt_id), status="implemented")
+    first_complete = _complete_build_with_passed_review(repo, first_attempt_id)
     assert first_complete.status == "ok"
 
     tasks_path = repo / "specs" / "master" / "tasks.md"
@@ -918,7 +1038,7 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_r
     assert second_begin.extras["attempt_id"] != first_attempt_id
     assert second_begin.extras["attempt_no"] == 2
 
-    second_complete = run_stage(repo, "do", action="complete", attempt_id=str(second_begin.extras["attempt_id"]), status="implemented")
+    second_complete = _complete_build_with_passed_review(repo, second_begin.extras["attempt_id"])
     assert second_complete.status == "ok"
 
     store = SQLiteStore(repo)
@@ -932,7 +1052,7 @@ def test_tasks_registration_recommends_ship_when_revisions_unchanged_and_tasks_c
     repo = _prepare_host_repo(tmp_path)
 
     t1_begin = run_stage(repo, "do", task_id="T1", action="begin")
-    assert run_stage(repo, "do", action="complete", attempt_id=str(t1_begin.extras["attempt_id"]), status="implemented").status == "ok"
+    assert _complete_build_with_passed_review(repo, t1_begin.extras["attempt_id"]).status == "ok"
     t2_begin = run_stage(repo, "do", task_id="T2", action="begin")
     assert run_stage(
         repo,

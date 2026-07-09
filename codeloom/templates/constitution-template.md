@@ -6,7 +6,8 @@
 
 - Record where new behavior belongs in this repository's actual layers, modules, packages, pages, jobs, integrations, schemas, or other stable ownership boundaries.
 - Name concrete owners only when they change future implementation choices.
-- Keep public contracts, DTO/VO/entity/schema boundaries, events/jobs, external integrations, and generated artifacts aligned with their real owner.
+- Keep public contracts, DTO/VO/entity/schema boundaries, events/jobs, external integrations, generated artifacts, and named facts aligned with their real owner.
+- Place enums, constants, status/type values, keys, error codes, and similar named facts by semantic ownership: entity/domain facts belong with the entity or domain concept, implementation-local facts may stay local, and shared facts belong only on an existing stable shared owner.
 - Do not mix UI, web adapter/controller, service/usecase/domain, persistence/SQL, infrastructure, and integration responsibilities when the repository already separates them.
 
 ## 2. Business, Data, and State Flow Visibility

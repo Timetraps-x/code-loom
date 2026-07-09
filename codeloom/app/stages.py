@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from codeloom.app.init_project import ProjectConfig, load_project_config
@@ -642,6 +644,8 @@ class StageRunner:
         action = str(context.request.args.get("action") or "").strip().lower()
         if action == "complete":
             return self._run_do_complete(context, tasks, session_id)
+        if action == "review-context":
+            return self._run_do_review_context(context, tasks, session_id)
         if action and action != "begin":
             return KernelResponse(status="failed", message=f"unsupported do action: {action}", recommended_next=_loom_command("do"), errors=["unsupported_do_action"])
 
@@ -680,6 +684,16 @@ class StageRunner:
                 context.store.supersede_open_findings_for_attempt(int(latest_attempt["id"]))
             else:
                 self._supersede_open_findings_for_task(context, blocking, task.task_id)
+            snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+            if snapshot.get("errors"):
+                return KernelResponse(
+                    status="blocked",
+                    message="attempt start snapshot could not be captured",
+                    recommended_next=self._recommended_do(task.task_id),
+                    recommended_task_id=task.task_id,
+                    extras=snapshot,
+                    errors=list(snapshot["errors"]),
+                )
             attempt_no = context.store.next_attempt_no(session_id, task.task_id)
             attempt_id = context.store.create_attempt(
                 session_id,
@@ -690,15 +704,10 @@ class StageRunner:
                 plan_hash,
                 tasks_hash,
                 task.fingerprint,
-            )
-            self._write_runtime_ref(
-                context,
-                attempt_id,
-                task.task_id,
-                attempt_no,
-                "git_status_begin",
-                "git-status-begin.json",
-                _collect_host_git_status_snapshot(context.request.cwd, task.task_id, attempt_no, "begin"),
+                str(snapshot.get("tree") or ""),
+                str(snapshot.get("head") or ""),
+                str(snapshot.get("snapshot_semantics") or ""),
+                json.dumps(snapshot.get("status_summary") or {}, ensure_ascii=False, sort_keys=True),
             )
             return self._do_begin_response(task, attempt_id, attempt_no)
 
@@ -731,7 +740,6 @@ class StageRunner:
             task.fingerprint,
         )
         runtime_result = create_runtime_client(context.config.default_runtime).execute(context.request.cwd, task)
-        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", runtime_result.diff)
         self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", runtime_result.stdout)
         self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", runtime_result.stderr)
 
@@ -799,6 +807,127 @@ class StageRunner:
             },
         )
 
+    def _run_do_review_context(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
+        attempt_id_value = context.request.args.get("attempt_id")
+        if attempt_id_value is None:
+            return KernelResponse(status="failed", message="attempt_id is required for review-context", recommended_next=_loom_command("do"), errors=["missing_attempt_id"])
+        try:
+            attempt_id = int(str(attempt_id_value))
+        except ValueError:
+            return KernelResponse(status="failed", message=f"invalid attempt_id: {attempt_id_value}", recommended_next=_loom_command("do"), errors=["invalid_attempt_id"])
+
+        attempt = context.store.attempt(attempt_id)
+        if attempt is None:
+            return KernelResponse(status="failed", message=f"attempt not found: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_found"])
+        if int(attempt["branch_session_id"]) != session_id:
+            return KernelResponse(status="failed", message=f"attempt does not belong to this branch session: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_session_mismatch"])
+        if attempt.get("status") != "running":
+            return KernelResponse(status="failed", message=f"attempt is not running: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_not_running"])
+        start_tree = str(attempt.get("start_tree") or "")
+        if not start_tree:
+            return KernelResponse(status="failed", message=f"attempt missing start snapshot: {attempt_id}", recommended_next=_loom_command("do"), errors=["attempt_missing_start_snapshot"])
+        task = next((item for item in tasks if item.task_id == attempt.get("task_id")), None)
+        if task is None:
+            return KernelResponse(status="failed", message=f"task not found for attempt: {attempt.get('task_id')}", recommended_next=_loom_command("tasks"), errors=["task_not_found"])
+        if attempt.get("task_fingerprint") != task.fingerprint:
+            return KernelResponse(status="failed", message=f"task definition changed during attempt: {task.task_id}", recommended_next=self._recommended_do(task.task_id), recommended_task_id=task.task_id, errors=["task_changed_during_attempt"])
+
+        snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+        if snapshot.get("errors"):
+            return KernelResponse(
+                status="blocked",
+                message="review snapshot could not be captured",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras=snapshot,
+                errors=list(snapshot["errors"]),
+            )
+        review_tree = str(snapshot.get("tree") or "")
+        revision = int(attempt.get("latest_review_context_revision") or 0) + 1
+        changes = _build_attempt_changes(context.request.cwd, task, attempt, start_tree, review_tree, revision, snapshot)
+        content = json.dumps(changes, ensure_ascii=False, indent=2, sort_keys=True)
+        changes_ref = context.evidence.write_attempt_file(task.task_id, int(attempt["attempt_no"]), "attempt-changes.json", content)
+        context.store.replace_runtime_ref(attempt_id, "attempt_changes", changes_ref, _content_hash(context.request.cwd / changes_ref))
+        recorded_revision = context.store.record_review_context(attempt_id, review_tree, changes_ref)
+
+        return KernelResponse(
+            status="ok",
+            message="review context generated",
+            recommended_next=self._recommended_do(task.task_id),
+            recommended_task_id=task.task_id,
+            extras={
+                "attempt_id": attempt_id,
+                "task_id": task.task_id,
+                "attempt_no": int(attempt["attempt_no"]),
+                "review_scope": "attempt_scoped",
+                "start_tree": start_tree,
+                "review_tree": review_tree,
+                "review_context_revision": recorded_revision,
+                "changes_ref": changes_ref,
+                "review_diff_command": f"git diff --no-ext-diff --no-textconv {start_tree} {review_tree}",
+            },
+        )
+
+
+    def _build_review_gate(self, context: StageContext, attempt: dict[str, Any], task: TaskDefinition, attempt_id: int) -> KernelResponse | None:
+        latest_revision = int(attempt.get("latest_review_context_revision") or 0)
+        latest_review_tree = str(attempt.get("latest_review_tree") or "")
+        if latest_revision <= 0 or not latest_review_tree:
+            return KernelResponse(
+                status="blocked",
+                message="review context is required before implemented completion",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["review_context_missing"],
+            )
+        requested_revision_value = context.request.args.get("review_context_revision")
+        if requested_revision_value is not None:
+            try:
+                requested_revision = int(str(requested_revision_value))
+            except ValueError:
+                requested_revision = -1
+            if requested_revision != latest_revision:
+                return KernelResponse(
+                    status="blocked",
+                    message="review context revision does not match latest review context",
+                    recommended_next=self._recommended_do(task.task_id),
+                    recommended_task_id=task.task_id,
+                    errors=["review_context_revision_mismatch"],
+                )
+        review_status = str(context.request.args.get("review_status") or attempt.get("latest_review_status") or "").strip().lower()
+        if review_status != "pass":
+            if review_status:
+                context.store.update_review_status(attempt_id, review_status)
+            return KernelResponse(
+                status="blocked",
+                message="scoped review has not passed",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["review_not_passed"],
+            )
+        snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+        if snapshot.get("errors"):
+            return KernelResponse(
+                status="blocked",
+                message="current snapshot could not be captured for review freshness check",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras=snapshot,
+                errors=["review_context_generation_failed"],
+            )
+        if str(snapshot.get("tree") or "") != latest_review_tree:
+            return KernelResponse(
+                status="blocked",
+                message="review context is stale; rerun review-context and code-reviewer",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras={"current_tree": snapshot.get("tree"), "latest_review_tree": latest_review_tree},
+                errors=["review_context_stale"],
+            )
+        context.store.update_review_status(attempt_id, "pass")
+        return None
+
+
     def _run_do_complete(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
         attempt_id_value = context.request.args.get("attempt_id")
         if attempt_id_value is None:
@@ -841,6 +970,10 @@ class StageRunner:
             )
 
         final_status = status
+        if task.lane == "build" and final_status == "implemented":
+            gate = self._build_review_gate(context, attempt, task, attempt_id)
+            if gate is not None:
+                return gate
         summary = str(context.request.args.get("summary") or f"Host runtime completed {task.task_id}: {task.title}")
         verification_summary, verification_summary_error = self._verification_summary_content(context, task)
         if verification_summary_error is not None:
@@ -849,31 +982,11 @@ class StageRunner:
             explicit_summary = str(context.request.args.get("summary") or "")
             if explicit_summary.strip():
                 verification_summary = explicit_summary
-        diff = _collect_host_diff(context.request.cwd)
         stdout = str(context.request.args.get("stdout") or "")
         stderr = str(context.request.args.get("stderr") or "")
         attempt_no = int(attempt["attempt_no"])
-        self._write_runtime_ref(
-            context,
-            attempt_id,
-            task.task_id,
-            attempt_no,
-            "git_status_complete",
-            "git-status-complete.json",
-            _collect_host_git_status_snapshot(context.request.cwd, task.task_id, attempt_no, "complete"),
-        )
-        self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "diff", "diff.patch", diff)
         self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stdout", "runtime.stdout.log", stdout)
         self._write_runtime_ref(context, attempt_id, task.task_id, attempt_no, "stderr", "runtime.stderr.log", stderr)
-        self._write_runtime_ref(
-            context,
-            attempt_id,
-            task.task_id,
-            attempt_no,
-            "change_inventory",
-            "change-inventory.json",
-            _collect_host_change_inventory(context.request.cwd, task.task_id, attempt_no),
-        )
         verification_summary_ref = self._write_runtime_ref(
             context,
             attempt_id,
@@ -1101,6 +1214,207 @@ class StageRunner:
 
 def _do_main_agent(lane: str) -> str:
     return "verifier" if lane == "verify" else "builder"
+
+
+def _capture_working_tree_content_snapshot(repo_path: Path) -> dict[str, Any]:
+    lines, status_error = _git_status_lines(repo_path)
+    result: dict[str, Any] = {
+        "snapshot_semantics": "working_tree_content",
+        "modifies_real_index": False,
+        "ignored_included": False,
+        "status_summary": {"git_status_short": lines},
+        "errors": [],
+    }
+    if status_error:
+        result["errors"].append(status_error)
+        return result
+    if any(line[:2].strip() == "U" or "U" in line[:2] for line in lines):
+        result["errors"].append("snapshot_conflicted_index")
+        return result
+    try:
+        sparse = subprocess.run(["git", "config", "--bool", "core.sparseCheckout"], cwd=repo_path, capture_output=True, text=True)
+        if sparse.returncode == 0 and sparse.stdout.strip().lower() == "true":
+            result["errors"].append("snapshot_sparse_checkout_unsupported")
+            return result
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_path, capture_output=True, text=True)
+        if head.returncode != 0:
+            result["errors"].append(head.stderr.strip() or "snapshot_head_unavailable")
+            return result
+        with TemporaryDirectory(prefix="codeloom-index-") as tmp_dir:
+            index_path = str(Path(tmp_dir) / "index")
+            env = os.environ | {"GIT_INDEX_FILE": index_path}
+            read_tree = subprocess.run(["git", "read-tree", "HEAD"], cwd=repo_path, env=env, capture_output=True, text=True)
+            if read_tree.returncode != 0:
+                result["errors"].append(read_tree.stderr.strip() or "snapshot_read_tree_failed")
+                return result
+            add = subprocess.run(["git", "add", "-A"], cwd=repo_path, env=env, capture_output=True, text=True)
+            if add.returncode != 0:
+                result["errors"].append(add.stderr.strip() or "snapshot_add_failed")
+                return result
+            remove_runtime = subprocess.run(["git", "rm", "-r", "--cached", "--ignore-unmatch", ".loom"], cwd=repo_path, env=env, capture_output=True, text=True)
+            if remove_runtime.returncode != 0:
+                result["errors"].append(remove_runtime.stderr.strip() or "snapshot_remove_runtime_failed")
+                return result
+            write_tree = subprocess.run(["git", "write-tree"], cwd=repo_path, env=env, capture_output=True, text=True)
+            if write_tree.returncode != 0:
+                result["errors"].append(write_tree.stderr.strip() or "snapshot_write_tree_failed")
+                return result
+    except FileNotFoundError:
+        result["errors"].append("git executable not found")
+        return result
+    result["head"] = head.stdout.strip()
+    result["tree"] = write_tree.stdout.strip()
+    return result
+
+
+def _build_attempt_changes(
+    repo_path: Path,
+    task: TaskDefinition,
+    attempt: dict[str, Any],
+    start_tree: str,
+    review_tree: str,
+    revision: int,
+    review_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    files = _diff_name_status(repo_path, start_tree, review_tree)
+    numstat = _diff_numstat(repo_path, start_tree, review_tree)
+    raw = _diff_raw(repo_path, start_tree, review_tree)
+    for item in files:
+        stats = numstat.get(item["path"], {})
+        raw_entry = raw.get(item["path"], {})
+        item["category"] = _change_category(item["path"])
+        item["additions"] = stats.get("additions", 0)
+        item["deletions"] = stats.get("deletions", 0)
+        item["binary"] = stats.get("binary", False)
+        item["old_mode"] = raw_entry.get("old_mode")
+        item["new_mode"] = raw_entry.get("new_mode")
+        item["old_oid"] = raw_entry.get("old_oid")
+        item["new_oid"] = raw_entry.get("new_oid")
+    summary = {
+        "files_changed": len(files),
+        "added_files": sum(1 for item in files if str(item["status"]).startswith("A")),
+        "modified_files": sum(1 for item in files if str(item["status"]).startswith("M")),
+        "deleted_files": sum(1 for item in files if str(item["status"]).startswith("D")),
+        "renamed_files": sum(1 for item in files if str(item["status"]).startswith("R")),
+        "additions": sum(int(item.get("additions") or 0) for item in files),
+        "deletions": sum(int(item.get("deletions") or 0) for item in files),
+        "binary_files": sum(1 for item in files if item.get("binary")),
+    }
+    try:
+        start_status = json.loads(str(attempt.get("start_status_json") or "{}"))
+    except json.JSONDecodeError:
+        start_status = {}
+    return {
+        "kind": "attempt_changes",
+        "version": 1,
+        "task_id": task.task_id,
+        "attempt_no": int(attempt["attempt_no"]),
+        "review_context_revision": revision,
+        "scope": "attempt",
+        "snapshot_semantics": "working_tree_content",
+        "diff_source": {
+            "start_tree": start_tree,
+            "review_tree": review_tree,
+            "patch_persisted": False,
+            "tree_objects_long_term_reliable": False,
+        },
+        "files": files,
+        "summary": summary,
+        "status_summary": {
+            "start": start_status,
+            "review": review_snapshot.get("status_summary") or {},
+        },
+        "review": {
+            "scope": "attempt_scoped",
+            "status": "pending",
+            "patch_persisted": False,
+        },
+        "errors": [],
+    }
+
+
+def _diff_name_status(repo_path: Path, start_tree: str, review_tree: str) -> list[dict[str, Any]]:
+    output, error = _git_diff_z(repo_path, "--name-status", start_tree, review_tree)
+    if error:
+        return []
+    tokens = [token for token in output.split("\0") if token]
+    files: list[dict[str, Any]] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index]
+        index += 1
+        if status.startswith(("R", "C")) and index + 1 < len(tokens):
+            old_path = tokens[index]
+            path = tokens[index + 1]
+            index += 2
+        elif index < len(tokens):
+            old_path = None
+            path = tokens[index]
+            index += 1
+        else:
+            break
+        files.append({"path": path, "old_path": old_path, "status": status})
+    return files
+
+
+def _diff_raw(repo_path: Path, start_tree: str, review_tree: str) -> dict[str, dict[str, str]]:
+    output, error = _git_diff_z(repo_path, "--raw", start_tree, review_tree)
+    if error:
+        return {}
+    tokens = [token for token in output.split("\0") if token]
+    raw: dict[str, dict[str, str]] = {}
+    index = 0
+    while index < len(tokens):
+        header = tokens[index]
+        index += 1
+        if not header.startswith(":") or index >= len(tokens):
+            continue
+        parts = header[1:].split()
+        if len(parts) < 5:
+            continue
+        old_mode, new_mode, old_oid, new_oid, status = parts[:5]
+        if status.startswith(("R", "C")) and index + 1 < len(tokens):
+            index += 1
+            path = tokens[index]
+            index += 1
+        else:
+            path = tokens[index]
+            index += 1
+        raw[path] = {"old_mode": old_mode, "new_mode": new_mode, "old_oid": old_oid, "new_oid": new_oid}
+    return raw
+
+
+def _diff_numstat(repo_path: Path, start_tree: str, review_tree: str) -> dict[str, dict[str, Any]]:
+    output, error = _git_diff_z(repo_path, "--numstat", start_tree, review_tree)
+    if error:
+        return {}
+    stats: dict[str, dict[str, Any]] = {}
+    for token in [item for item in output.split("\0") if item]:
+        parts = token.split("\t")
+        if len(parts) < 3:
+            continue
+        additions_text, deletions_text, path = parts[0], parts[1], parts[-1]
+        binary = additions_text == "-" or deletions_text == "-"
+        stats[path] = {
+            "additions": 0 if binary else int(additions_text),
+            "deletions": 0 if binary else int(deletions_text),
+            "binary": binary,
+        }
+    return stats
+
+
+def _git_diff_z(repo_path: Path, mode: str, start_tree: str, review_tree: str) -> tuple[str, str | None]:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--no-textconv", mode, "-z", start_tree, review_tree],
+            cwd=repo_path,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return "", "git executable not found"
+    if result.returncode != 0:
+        return "", result.stderr.decode("utf-8", errors="replace").strip() or f"git diff exited with {result.returncode}"
+    return result.stdout.decode("utf-8", errors="replace"), None
 
 
 def _collect_host_diff(repo_path: Path) -> str:

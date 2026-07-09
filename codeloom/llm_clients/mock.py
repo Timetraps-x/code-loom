@@ -88,7 +88,7 @@ class MockLlmClient(LlmClient):
             + ("\n".join(f"- {blocker}" for blocker in blockers) or "- None")
             + "\n\n## 5. Open Findings\n"
             + ("\n".join(f"- {finding}" for finding in findings) or "- None")
-            + "\n\n## 6.1 Change Inventory / Runtime Evidence References\n"
+            + "\n\n## 6.1 Attempt Changes / Runtime Evidence\n"
             + ("\n".join(f"- {ref}" for ref in evidence) or "- None")
             + "\n"
         )
