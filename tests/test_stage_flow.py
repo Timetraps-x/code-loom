@@ -59,8 +59,8 @@ def _commit_all(repo, message="initial"):
 
 
 def _complete_build_with_passed_review(repo, attempt_id, **kwargs):
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(attempt_id))
-    assert review.status == "ok"
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(attempt_id))
+    assert sealed.status == "ok"
     return run_stage(
         repo,
         "do",
@@ -68,7 +68,7 @@ def _complete_build_with_passed_review(repo, attempt_id, **kwargs):
         attempt_id=str(attempt_id),
         status="implemented",
         review_status="pass",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
         **kwargs,
     )
 
@@ -469,6 +469,17 @@ def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
     begin = run_stage(repo, "do", task_id="T1", action="begin")
 
     assert begin.status == "ok"
+    assert begin.extras["host_internal_flow"]["user_visible"] is False
+    assert begin.extras["host_internal_flow"]["sequence"] == [
+        "run_main_agent",
+        "seal_changes",
+        "run_reviewer_agent",
+        "complete_attempt",
+    ]
+    assert begin.extras["host_internal_flow"]["after_main_agent"]["command_args"] == {
+        "action": "seal-changes",
+        "attempt_id": begin.extras["attempt_id"],
+    }
     index_after = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, check=True, capture_output=True, text=True).stdout
     assert index_after == index_before
 
@@ -483,7 +494,7 @@ def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
     assert "?? untracked.txt" in status_summary["git_status_short"]
 
 
-def test_claude_code_review_context_writes_attempt_changes(tmp_path):
+def test_claude_code_seal_changes_writes_attempt_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     before_begin = repo / "before-begin.txt"
     before_begin.write_text("pre-existing\n", encoding="utf-8")
@@ -496,25 +507,37 @@ def test_claude_code_review_context_writes_attempt_changes(tmp_path):
     (repo / "tracked-after.txt").write_text("after\n", encoding="utf-8")
     (repo / "untracked-after.txt").write_text("new\n", encoding="utf-8")
 
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
 
-    assert review.status == "ok"
-    assert review.extras["review_scope"] == "attempt_scoped"
-    assert review.extras["review_context_revision"] == 1
-    assert "git diff --no-ext-diff --no-textconv" in review.extras["review_diff_command"]
+    assert sealed.status == "ok"
+    assert sealed.extras["review_scope"] == "attempt_scoped"
+    assert sealed.extras["seal_revision"] == 1
+    assert "git diff --no-ext-diff --no-textconv" in sealed.extras["sealed_diff_command"]
+    assert sealed.extras["reviewer_handoff"] == {
+        "user_visible": False,
+        "agent": "code-reviewer",
+        "review_scope": "attempt_scoped",
+        "seal_revision": sealed.extras["seal_revision"],
+        "sealed_changes_ref": sealed.extras["sealed_changes_ref"],
+        "sealed_diff_command": sealed.extras["sealed_diff_command"],
+        "do_not_review_full_worktree": True,
+    }
 
     store = SQLiteStore(repo)
     attempt = store.attempt(int(begin.extras["attempt_id"]))
     assert attempt is not None
-    assert attempt["latest_review_tree"] == review.extras["review_tree"]
-    assert attempt["latest_review_context_revision"] == 1
+    assert attempt["latest_sealed_tree"] == sealed.extras["sealed_tree"]
+    assert attempt["latest_seal_revision"] == 1
     assert attempt["latest_review_status"] == "pending"
-    assert attempt["latest_changes_ref"] == review.extras["changes_ref"]
+    assert attempt["latest_sealed_changes_ref"] == sealed.extras["sealed_changes_ref"]
 
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
     changes_ref = next(ref for ref in refs if ref["kind"] == "attempt_changes")
     changes = json.loads(repo.joinpath(changes_ref["path"]).read_text(encoding="utf-8"))
     paths = {item["path"] for item in changes["files"]}
+    assert changes["version"] == 2
+    assert changes["seal_revision"] == 1
+    assert changes["diff_source"]["sealed_tree"] == sealed.extras["sealed_tree"]
     assert "tracked-after.txt" in paths
     assert "untracked-after.txt" in paths
     assert "before-begin.txt" not in paths
@@ -523,19 +546,25 @@ def test_claude_code_review_context_writes_attempt_changes(tmp_path):
     assert changes["review"]["patch_persisted"] is False
     assert not list((repo / ".loom" / "runs" / "master").glob("*-attempt-diff.patch"))
 
-    second = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
-    assert second.extras["review_context_revision"] == 2
+    second = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    assert second.extras["seal_revision"] == 2
     assert len([ref for ref in store.runtime_refs(int(begin.extras["attempt_id"])) if ref["kind"] == "attempt_changes"]) == 1
 
 
-def test_claude_code_build_implemented_requires_review_context(tmp_path):
+def test_claude_code_build_implemented_requires_sealed_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
 
     completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_missing"]
+    assert completed.errors == ["sealed_changes_missing"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
     attempt = SQLiteStore(repo).attempt(int(begin.extras["attempt_id"]))
     assert attempt is not None
     assert attempt["status"] == "running"
@@ -544,7 +573,7 @@ def test_claude_code_build_implemented_requires_review_context(tmp_path):
 def test_claude_code_build_implemented_requires_passed_review(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
 
     completed = run_stage(
         repo,
@@ -553,17 +582,17 @@ def test_claude_code_build_implemented_requires_passed_review(tmp_path):
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="changes_requested",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
     )
 
     assert completed.status == "blocked"
     assert completed.errors == ["review_not_passed"]
 
 
-def test_claude_code_build_implemented_rejects_stale_review_context(tmp_path):
+def test_claude_code_build_implemented_rejects_stale_sealed_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
     (repo / "after-review.txt").write_text("changed\n", encoding="utf-8")
 
     completed = run_stage(
@@ -573,18 +602,24 @@ def test_claude_code_build_implemented_rejects_stale_review_context(tmp_path):
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="pass",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
     )
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_stale"]
+    assert completed.errors == ["sealed_changes_stale"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
 
 
-def test_claude_code_build_implemented_rejects_review_revision_mismatch(tmp_path):
+def test_claude_code_build_implemented_rejects_seal_revision_mismatch(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
-    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
 
     completed = run_stage(
         repo,
@@ -593,11 +628,41 @@ def test_claude_code_build_implemented_rejects_review_revision_mismatch(tmp_path
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="pass",
-        review_context_revision="1",
+        seal_revision="1",
     )
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_revision_mismatch"]
+    assert completed.errors == ["seal_revision_mismatch"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
+
+
+def test_claude_code_rejects_legacy_seal_action_and_complete_argument(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    legacy_action = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+
+    assert legacy_action.status == "failed"
+    assert legacy_action.errors == ["legacy_do_action_not_supported"]
+
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    legacy_argument = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+        review_status="pass",
+        review_context_revision=str(sealed.extras["seal_revision"]),
+    )
+
+    assert legacy_argument.status == "failed"
+    assert legacy_argument.errors == ["legacy_complete_argument_not_supported"]
 
 
 def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):

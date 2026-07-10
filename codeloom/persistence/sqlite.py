@@ -60,11 +60,24 @@ class SQLiteStore:
 
     def _migrate_attempts(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
-        for column in ("start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_tree", "latest_review_status", "latest_changes_ref"):
+        for column in ("start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_status", "latest_sealed_tree", "latest_sealed_changes_ref"):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
-        if columns and "latest_review_context_revision" not in columns:
-            conn.execute("ALTER TABLE attempts ADD COLUMN latest_review_context_revision INTEGER NOT NULL DEFAULT 0")
+        if columns and "latest_seal_revision" not in columns:
+            conn.execute("ALTER TABLE attempts ADD COLUMN latest_seal_revision INTEGER NOT NULL DEFAULT 0")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+        if {"latest_review_tree", "latest_review_context_revision", "latest_changes_ref"} <= columns:
+            conn.execute(
+                """
+                UPDATE attempts
+                SET latest_sealed_tree = COALESCE(latest_sealed_tree, latest_review_tree),
+                    latest_seal_revision = CASE
+                        WHEN latest_seal_revision = 0 THEN COALESCE(latest_review_context_revision, 0)
+                        ELSE latest_seal_revision
+                    END,
+                    latest_sealed_changes_ref = COALESCE(latest_sealed_changes_ref, latest_changes_ref)
+                """
+            )
 
     def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
@@ -266,20 +279,20 @@ class SQLiteStore:
                 (status, summary, utc_now(), attempt_id),
             )
 
-    def record_review_context(self, attempt_id: int, review_tree: str, changes_ref: str) -> int:
+    def record_sealed_changes(self, attempt_id: int, sealed_tree: str, changes_ref: str) -> int:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT latest_review_context_revision FROM attempts WHERE id = ?",
+                "SELECT latest_seal_revision FROM attempts WHERE id = ?",
                 (attempt_id,),
             ).fetchone()
-            revision = int(row["latest_review_context_revision"] or 0) + 1
+            revision = int(row["latest_seal_revision"] or 0) + 1
             conn.execute(
                 """
                 UPDATE attempts
-                SET latest_review_tree = ?, latest_review_context_revision = ?, latest_review_status = ?, latest_changes_ref = ?, updated_at = ?
+                SET latest_sealed_tree = ?, latest_seal_revision = ?, latest_review_status = ?, latest_sealed_changes_ref = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (review_tree, revision, "pending", changes_ref, utc_now(), attempt_id),
+                (sealed_tree, revision, "pending", changes_ref, utc_now(), attempt_id),
             )
             return revision
 

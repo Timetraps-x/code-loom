@@ -72,7 +72,7 @@ When reading constitution directly, read only the sections relevant to the curre
 - Task-local notes, preserved design constraints, and evidence requirements, including any filtered constitution-derived constraints from `tasks.md`.
 - `.loom/constitution.md` only when the task context is incomplete, ambiguous, or conflicting.
 - Matching stack material under `.loom/references/positive-cases/` only when stack-local code shape, abstraction threshold, defensive-code threshold, or smallest meaningful evidence is unclear.
-- Host-provided scoped review context when the runtime supplies it.
+- Host-provided sealed attempt change set and reviewer handoff when the runtime supplies them.
 
 # Actions
 

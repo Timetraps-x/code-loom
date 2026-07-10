@@ -644,8 +644,15 @@ class StageRunner:
         action = str(context.request.args.get("action") or "").strip().lower()
         if action == "complete":
             return self._run_do_complete(context, tasks, session_id)
+        if action == "seal-changes":
+            return self._run_do_seal_changes(context, tasks, session_id)
         if action == "review-context":
-            return self._run_do_review_context(context, tasks, session_id)
+            return KernelResponse(
+                status="failed",
+                message="review-context is no longer supported; host must use seal-changes",
+                recommended_next=_loom_command("do"),
+                errors=["legacy_do_action_not_supported"],
+            )
         if action and action != "begin":
             return KernelResponse(status="failed", message=f"unsupported do action: {action}", recommended_next=_loom_command("do"), errors=["unsupported_do_action"])
 
@@ -789,28 +796,40 @@ class StageRunner:
         )
 
     def _do_begin_response(self, task: TaskDefinition, attempt_id: int, attempt_no: int) -> KernelResponse:
+        extras: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "attempt_no": attempt_no,
+            "task_id": task.task_id,
+            "task_title": task.title,
+            "lane": task.lane,
+            "complexity": task.complexity,
+            "main_agent": _do_main_agent(task.lane),
+            "reviewer_agent": "code-reviewer" if task.lane == "build" else None,
+            "task_definition": task.raw,
+        }
+        if task.lane == "build":
+            extras["host_internal_flow"] = {
+                "user_visible": False,
+                "sequence": ["run_main_agent", "seal_changes", "run_reviewer_agent", "complete_attempt"],
+                "after_main_agent": {
+                    "internal_action": "seal_changes",
+                    "command_args": {"action": "seal-changes", "attempt_id": attempt_id},
+                    "before_reviewer_agent": "code-reviewer",
+                },
+                "complete_requires": ["review_status=pass", "seal_revision=<latest-seal-revision>"],
+            }
         return KernelResponse(
             status="ok",
             message="do attempt started",
             recommended_next=self._recommended_do(task.task_id),
             recommended_task_id=task.task_id,
-            extras={
-                "attempt_id": attempt_id,
-                "attempt_no": attempt_no,
-                "task_id": task.task_id,
-                "task_title": task.title,
-                "lane": task.lane,
-                "complexity": task.complexity,
-                "main_agent": _do_main_agent(task.lane),
-                "reviewer_agent": "code-reviewer" if task.lane == "build" else None,
-                "task_definition": task.raw,
-            },
+            extras=extras,
         )
 
-    def _run_do_review_context(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
+    def _run_do_seal_changes(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
         attempt_id_value = context.request.args.get("attempt_id")
         if attempt_id_value is None:
-            return KernelResponse(status="failed", message="attempt_id is required for review-context", recommended_next=_loom_command("do"), errors=["missing_attempt_id"])
+            return KernelResponse(status="failed", message="attempt_id is required for seal-changes", recommended_next=_loom_command("do"), errors=["missing_attempt_id"])
         try:
             attempt_id = int(str(attempt_id_value))
         except ValueError:
@@ -836,23 +855,24 @@ class StageRunner:
         if snapshot.get("errors"):
             return KernelResponse(
                 status="blocked",
-                message="review snapshot could not be captured",
+                message="current snapshot could not be captured to seal attempt changes",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
                 extras=snapshot,
                 errors=list(snapshot["errors"]),
             )
-        review_tree = str(snapshot.get("tree") or "")
-        revision = int(attempt.get("latest_review_context_revision") or 0) + 1
-        changes = _build_attempt_changes(context.request.cwd, task, attempt, start_tree, review_tree, revision, snapshot)
+        sealed_tree = str(snapshot.get("tree") or "")
+        revision = int(attempt.get("latest_seal_revision") or 0) + 1
+        changes = _build_attempt_changes(context.request.cwd, task, attempt, start_tree, sealed_tree, revision, snapshot)
         content = json.dumps(changes, ensure_ascii=False, indent=2, sort_keys=True)
         changes_ref = context.evidence.write_attempt_file(task.task_id, int(attempt["attempt_no"]), "attempt-changes.json", content)
         context.store.replace_runtime_ref(attempt_id, "attempt_changes", changes_ref, _content_hash(context.request.cwd / changes_ref))
-        recorded_revision = context.store.record_review_context(attempt_id, review_tree, changes_ref)
+        recorded_revision = context.store.record_sealed_changes(attempt_id, sealed_tree, changes_ref)
+        sealed_diff_command = f"git diff --no-ext-diff --no-textconv {start_tree} {sealed_tree}"
 
         return KernelResponse(
             status="ok",
-            message="review context generated",
+            message="attempt changes sealed",
             recommended_next=self._recommended_do(task.task_id),
             recommended_task_id=task.task_id,
             extras={
@@ -861,26 +881,43 @@ class StageRunner:
                 "attempt_no": int(attempt["attempt_no"]),
                 "review_scope": "attempt_scoped",
                 "start_tree": start_tree,
-                "review_tree": review_tree,
-                "review_context_revision": recorded_revision,
-                "changes_ref": changes_ref,
-                "review_diff_command": f"git diff --no-ext-diff --no-textconv {start_tree} {review_tree}",
+                "sealed_tree": sealed_tree,
+                "seal_revision": recorded_revision,
+                "sealed_changes_ref": changes_ref,
+                "sealed_diff_command": sealed_diff_command,
+                "reviewer_handoff": {
+                    "user_visible": False,
+                    "agent": "code-reviewer",
+                    "review_scope": "attempt_scoped",
+                    "seal_revision": recorded_revision,
+                    "sealed_changes_ref": changes_ref,
+                    "sealed_diff_command": sealed_diff_command,
+                    "do_not_review_full_worktree": True,
+                },
             },
         )
 
-
-    def _build_review_gate(self, context: StageContext, attempt: dict[str, Any], task: TaskDefinition, attempt_id: int) -> KernelResponse | None:
-        latest_revision = int(attempt.get("latest_review_context_revision") or 0)
-        latest_review_tree = str(attempt.get("latest_review_tree") or "")
-        if latest_revision <= 0 or not latest_review_tree:
+    def _build_seal_changes_gate(self, context: StageContext, attempt: dict[str, Any], task: TaskDefinition, attempt_id: int) -> KernelResponse | None:
+        latest_revision = int(attempt.get("latest_seal_revision") or 0)
+        latest_sealed_tree = str(attempt.get("latest_sealed_tree") or "")
+        if latest_revision <= 0 or not latest_sealed_tree:
             return KernelResponse(
                 status="blocked",
-                message="review context is required before implemented completion",
+                message="sealed attempt changes are required before implemented completion",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                errors=["review_context_missing"],
+                extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
+                errors=["sealed_changes_missing"],
             )
-        requested_revision_value = context.request.args.get("review_context_revision")
+        if "review_context_revision" in context.request.args:
+            return KernelResponse(
+                status="failed",
+                message="review_context_revision is no longer supported; host must use seal_revision",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                errors=["legacy_complete_argument_not_supported"],
+            )
+        requested_revision_value = context.request.args.get("seal_revision")
         if requested_revision_value is not None:
             try:
                 requested_revision = int(str(requested_revision_value))
@@ -889,10 +926,11 @@ class StageRunner:
             if requested_revision != latest_revision:
                 return KernelResponse(
                     status="blocked",
-                    message="review context revision does not match latest review context",
+                    message="seal revision does not match latest sealed attempt changes",
                     recommended_next=self._recommended_do(task.task_id),
                     recommended_task_id=task.task_id,
-                    errors=["review_context_revision_mismatch"],
+                    extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
+                    errors=["seal_revision_mismatch"],
                 )
         review_status = str(context.request.args.get("review_status") or attempt.get("latest_review_status") or "").strip().lower()
         if review_status != "pass":
@@ -900,33 +938,46 @@ class StageRunner:
                 context.store.update_review_status(attempt_id, review_status)
             return KernelResponse(
                 status="blocked",
-                message="scoped review has not passed",
+                message="sealed attempt changes have not passed review",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
                 errors=["review_not_passed"],
             )
         snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
         if snapshot.get("errors"):
+            extras = dict(snapshot)
+            extras["host_recovery"] = self._seal_changes_recovery(attempt_id, rerun_reviewer=True)
             return KernelResponse(
                 status="blocked",
-                message="current snapshot could not be captured for review freshness check",
+                message="current snapshot could not be captured for sealed changes freshness check",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                extras=snapshot,
-                errors=["review_context_generation_failed"],
+                extras=extras,
+                errors=["sealed_changes_generation_failed"],
             )
-        if str(snapshot.get("tree") or "") != latest_review_tree:
+        if str(snapshot.get("tree") or "") != latest_sealed_tree:
             return KernelResponse(
                 status="blocked",
-                message="review context is stale; rerun review-context and code-reviewer",
+                message="sealed attempt changes are stale; host should reseal and rerun code-reviewer before completing this attempt",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                extras={"current_tree": snapshot.get("tree"), "latest_review_tree": latest_review_tree},
-                errors=["review_context_stale"],
+                extras={
+                    "current_tree": snapshot.get("tree"),
+                    "latest_sealed_tree": latest_sealed_tree,
+                    "host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True),
+                },
+                errors=["sealed_changes_stale"],
             )
         context.store.update_review_status(attempt_id, "pass")
         return None
 
+    def _seal_changes_recovery(self, attempt_id: int, rerun_reviewer: bool) -> dict[str, Any]:
+        return {
+            "user_visible": False,
+            "internal_action": "seal_changes",
+            "command_args": {"action": "seal-changes", "attempt_id": attempt_id},
+            "rerun_reviewer": rerun_reviewer,
+        }
 
     def _run_do_complete(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
         attempt_id_value = context.request.args.get("attempt_id")
@@ -971,7 +1022,7 @@ class StageRunner:
 
         final_status = status
         if task.lane == "build" and final_status == "implemented":
-            gate = self._build_review_gate(context, attempt, task, attempt_id)
+            gate = self._build_seal_changes_gate(context, attempt, task, attempt_id)
             if gate is not None:
                 return gate
         summary = str(context.request.args.get("summary") or f"Host runtime completed {task.task_id}: {task.title}")
@@ -1272,13 +1323,13 @@ def _build_attempt_changes(
     task: TaskDefinition,
     attempt: dict[str, Any],
     start_tree: str,
-    review_tree: str,
-    revision: int,
-    review_snapshot: dict[str, Any],
+    sealed_tree: str,
+    seal_revision: int,
+    sealed_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    files = _diff_name_status(repo_path, start_tree, review_tree)
-    numstat = _diff_numstat(repo_path, start_tree, review_tree)
-    raw = _diff_raw(repo_path, start_tree, review_tree)
+    files = _diff_name_status(repo_path, start_tree, sealed_tree)
+    numstat = _diff_numstat(repo_path, start_tree, sealed_tree)
+    raw = _diff_raw(repo_path, start_tree, sealed_tree)
     for item in files:
         stats = numstat.get(item["path"], {})
         raw_entry = raw.get(item["path"], {})
@@ -1306,15 +1357,15 @@ def _build_attempt_changes(
         start_status = {}
     return {
         "kind": "attempt_changes",
-        "version": 1,
+        "version": 2,
         "task_id": task.task_id,
         "attempt_no": int(attempt["attempt_no"]),
-        "review_context_revision": revision,
+        "seal_revision": seal_revision,
         "scope": "attempt",
         "snapshot_semantics": "working_tree_content",
         "diff_source": {
             "start_tree": start_tree,
-            "review_tree": review_tree,
+            "sealed_tree": sealed_tree,
             "patch_persisted": False,
             "tree_objects_long_term_reliable": False,
         },
@@ -1322,7 +1373,7 @@ def _build_attempt_changes(
         "summary": summary,
         "status_summary": {
             "start": start_status,
-            "review": review_snapshot.get("status_summary") or {},
+            "sealed": sealed_snapshot.get("status_summary") or {},
         },
         "review": {
             "scope": "attempt_scoped",
@@ -1333,8 +1384,8 @@ def _build_attempt_changes(
     }
 
 
-def _diff_name_status(repo_path: Path, start_tree: str, review_tree: str) -> list[dict[str, Any]]:
-    output, error = _git_diff_z(repo_path, "--name-status", start_tree, review_tree)
+def _diff_name_status(repo_path: Path, start_tree: str, sealed_tree: str) -> list[dict[str, Any]]:
+    output, error = _git_diff_z(repo_path, "--name-status", start_tree, sealed_tree)
     if error:
         return []
     tokens = [token for token in output.split("\0") if token]
@@ -1357,8 +1408,8 @@ def _diff_name_status(repo_path: Path, start_tree: str, review_tree: str) -> lis
     return files
 
 
-def _diff_raw(repo_path: Path, start_tree: str, review_tree: str) -> dict[str, dict[str, str]]:
-    output, error = _git_diff_z(repo_path, "--raw", start_tree, review_tree)
+def _diff_raw(repo_path: Path, start_tree: str, sealed_tree: str) -> dict[str, dict[str, str]]:
+    output, error = _git_diff_z(repo_path, "--raw", start_tree, sealed_tree)
     if error:
         return {}
     tokens = [token for token in output.split("\0") if token]
@@ -1384,8 +1435,8 @@ def _diff_raw(repo_path: Path, start_tree: str, review_tree: str) -> dict[str, d
     return raw
 
 
-def _diff_numstat(repo_path: Path, start_tree: str, review_tree: str) -> dict[str, dict[str, Any]]:
-    output, error = _git_diff_z(repo_path, "--numstat", start_tree, review_tree)
+def _diff_numstat(repo_path: Path, start_tree: str, sealed_tree: str) -> dict[str, dict[str, Any]]:
+    output, error = _git_diff_z(repo_path, "--numstat", start_tree, sealed_tree)
     if error:
         return {}
     stats: dict[str, dict[str, Any]] = {}
@@ -1403,10 +1454,10 @@ def _diff_numstat(repo_path: Path, start_tree: str, review_tree: str) -> dict[st
     return stats
 
 
-def _git_diff_z(repo_path: Path, mode: str, start_tree: str, review_tree: str) -> tuple[str, str | None]:
+def _git_diff_z(repo_path: Path, mode: str, start_tree: str, sealed_tree: str) -> tuple[str, str | None]:
     try:
         result = subprocess.run(
-            ["git", "diff", "--no-ext-diff", "--no-textconv", mode, "-z", start_tree, review_tree],
+            ["git", "diff", "--no-ext-diff", "--no-textconv", mode, "-z", start_tree, sealed_tree],
             cwd=repo_path,
             capture_output=True,
         )

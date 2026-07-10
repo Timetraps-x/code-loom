@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 SCHEMA = [
     """
@@ -61,10 +61,10 @@ SCHEMA = [
         start_head TEXT,
         snapshot_semantics TEXT,
         start_status_json TEXT,
-        latest_review_tree TEXT,
-        latest_review_context_revision INTEGER NOT NULL DEFAULT 0,
+        latest_sealed_tree TEXT,
+        latest_seal_revision INTEGER NOT NULL DEFAULT 0,
         latest_review_status TEXT,
-        latest_changes_ref TEXT,
+        latest_sealed_changes_ref TEXT,
         status TEXT NOT NULL,
         summary TEXT,
         created_at TEXT NOT NULL,
