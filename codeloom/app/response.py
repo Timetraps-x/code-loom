@@ -10,6 +10,7 @@ class KernelResponse:
     message: str
     recommended_next: str | None = None
     recommended_task_id: str | None = None
+    recommended_task_title: str | None = None
     artifact_paths: list[str] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -21,6 +22,7 @@ class KernelResponse:
             "message": self.message,
             "recommended_next": self.recommended_next,
             "recommended_task_id": self.recommended_task_id,
+            "recommended_task_title": self.recommended_task_title,
             "artifact_paths": self.artifact_paths,
             "findings": self.findings,
             "errors": self.errors,

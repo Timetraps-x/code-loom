@@ -25,6 +25,14 @@ def emit_data(data: dict[str, Any], json_output: bool, renderer: Callable[[dict[
     print(renderer(data))
 
 
+def _recommended_task_label(task_id: str | None, task_title: str | None) -> str:
+    if not task_id:
+        return "none"
+    if task_title:
+        return f"{task_id}-{task_title}"
+    return task_id
+
+
 def render_kernel_response(response: KernelResponse) -> str:
     lines = [
         f"Status: {response.status}",
@@ -33,7 +41,8 @@ def render_kernel_response(response: KernelResponse) -> str:
     if response.recommended_next:
         lines.append(f"Recommended next: {response.recommended_next}")
     if response.recommended_task_id:
-        lines.append(f"Recommended task: {response.recommended_task_id}")
+        task_label = _recommended_task_label(response.recommended_task_id, response.recommended_task_title)
+        lines.append(f"Recommended task: {task_label}")
     if response.artifact_paths:
         lines.append("Artifacts:")
         lines.extend(f"  - {path}" for path in response.artifact_paths)
@@ -99,7 +108,7 @@ def render_status(data: dict[str, Any]) -> str:
     session = data.get("session") or {}
     if session:
         recommended_next = session.get("recommended_next") or "none"
-        recommended_task = session.get("recommended_task_id") or "none"
+        recommended_task = _recommended_task_label(session.get("recommended_task_id"), session.get("recommended_task_title"))
         lines.append(f"Recommended next: {recommended_next}")
         lines.append(f"Recommended task: {recommended_task}")
         active_hashes = session.get("active_hashes") or {}

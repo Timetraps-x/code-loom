@@ -38,6 +38,7 @@ class StageContext:
 class NextRecommendation:
     command: str | None
     task_id: str | None = None
+    task_title: str | None = None
 
 def _loom_command(command: str) -> str:
     return f"/loom-{command}"
@@ -277,7 +278,7 @@ class StageRunner:
 
         task = self._select_recommended_task(context, tasks)
         if task is not None:
-            return NextRecommendation(self._recommended_do(task.task_id), task.task_id)
+            return NextRecommendation(self._recommended_do(task.task_id), task.task_id, task.title)
         return NextRecommendation(_loom_command("ship"))
 
     def _recommended_do(self, task_id: str) -> str:
@@ -337,12 +338,13 @@ class StageRunner:
                 if attempt is None:
                     continue
                 task_id = str(attempt["task_id"])
-                return NextRecommendation(self._recommended_do(task_id), task_id)
+                title = self._task_title_from_current_tasks(context, task_id)
+                return NextRecommendation(self._recommended_do(task_id), task_id, title)
             if command in {_loom_command("spec"), _loom_command("plan"), _loom_command("tasks"), _loom_command("ship")}:
                 return NextRecommendation(command)
             if command.startswith(f"{_loom_command('do')} "):
                 task_id = command.split(maxsplit=1)[1]
-                return NextRecommendation(command, task_id)
+                return NextRecommendation(command, task_id, self._task_title_from_current_tasks(context, task_id))
         return NextRecommendation(None)
 
     def _blocking_allows_explicit_retry(
@@ -377,8 +379,14 @@ class StageRunner:
         next_task = self._select_recommended_task(context, tasks)
         if next_task is None:
             return NextRecommendation(_loom_command("ship"))
-        return NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+        return NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id, next_task.title)
 
+    def _task_title_from_current_tasks(self, context: StageContext, task_id: str) -> str | None:
+        tasks_content = context.artifacts.read("tasks") or ""
+        for task in parse_tasks(tasks_content):
+            if task.task_id == task_id:
+                return task.title
+        return None
 
     def _host_artifact_required_response(self, context: StageContext, kind: str) -> KernelResponse | None:
         if context.config.default_runtime != "claude-code" or context.request.args.get("artifact_file"):
@@ -600,23 +608,22 @@ class StageRunner:
         )
         self._record_task_snapshots(context, content, tasks_hash)
         self._resolve_artifact_drift(context, "tasks")
-        next_task = self._select_recommended_task(context, tasks)
-        recommended_next = _loom_command("ship") if next_task is None else self._recommended_do(next_task.task_id)
-        recommended_task_id = None if next_task is None else next_task.task_id
+        recommendation = self._next_task_recommendation(context, tasks)
         context.store.update_branch_session(
             session_id,
             active_stage="tasks",
             active_spec_hash=spec_hash,
             active_plan_hash=plan_hash,
             active_tasks_hash=tasks_hash,
-            recommended_next=recommended_next,
-            recommended_task_id=recommended_task_id,
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
         )
         return KernelResponse(
             status="ok",
             message="tasks.md generated",
-            recommended_next=recommended_next,
-            recommended_task_id=recommended_task_id,
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+            recommended_task_title=recommendation.task_title,
             artifact_paths=[context.artifacts.relative(path)],
         )
 
@@ -666,6 +673,7 @@ class StageRunner:
                 message="open blocking finding exists",
                 recommended_next=recommendation.command,
                 recommended_task_id=recommendation.task_id,
+                recommended_task_title=recommendation.task_title,
                 findings=blocking,
             )
 
@@ -681,7 +689,7 @@ class StageRunner:
         decision = self.resolver.resolve(task, latest_snapshot, latest_attempt, False)
         if decision.action == "verified":
             recommendation = self._next_task_recommendation(context, tasks)
-            return KernelResponse(status="ok", message=decision.message, recommended_next=recommendation.command, recommended_task_id=recommendation.task_id)
+            return KernelResponse(status="ok", message=decision.message, recommended_next=recommendation.command, recommended_task_id=recommendation.task_id, recommended_task_title=recommendation.task_title)
         if decision.action in {"blocked", "superseded"}:
             return KernelResponse(status="blocked", message=decision.message, recommended_next=decision.recommended_next)
         if action == "begin":
@@ -698,6 +706,7 @@ class StageRunner:
                     message="attempt start snapshot could not be captured",
                     recommended_next=self._recommended_do(task.task_id),
                     recommended_task_id=task.task_id,
+                    recommended_task_title=task.title,
                     extras=snapshot,
                     errors=list(snapshot["errors"]),
                 )
@@ -775,13 +784,13 @@ class StageRunner:
                 _loom_command("do"),
             )
         if status in {"failed", "blocked"}:
-            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
+            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id, task.title)
         else:
             next_task = self._select_recommended_task(context, tasks)
             if next_task is None:
                 recommendation = NextRecommendation(_loom_command("ship"))
             else:
-                recommendation = NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+                recommendation = NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id, next_task.title)
         context.store.update_branch_session(
             session_id,
             active_stage="do",
@@ -793,6 +802,7 @@ class StageRunner:
             message=runtime_result.summary,
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
+            recommended_task_title=recommendation.task_title,
         )
 
     def _do_begin_response(self, task: TaskDefinition, attempt_id: int, attempt_no: int) -> KernelResponse:
@@ -1072,12 +1082,12 @@ class StageRunner:
                 f"do attempt {final_status} for {task.task_id}",
                 _loom_command("do"),
             )
-            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id)
+            recommendation = NextRecommendation(self._recommended_do(task.task_id), task.task_id, task.title)
         else:
             if final_status == "verified":
                 context.store.resolve_open_findings_for_attempt(attempt_id, "verification_failure")
             next_task = self._select_recommended_task(context, tasks)
-            recommendation = NextRecommendation(_loom_command("ship")) if next_task is None else NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id)
+            recommendation = NextRecommendation(_loom_command("ship")) if next_task is None else NextRecommendation(self._recommended_do(next_task.task_id), next_task.task_id, next_task.title)
 
         context.store.update_branch_session(
             session_id,
@@ -1091,6 +1101,7 @@ class StageRunner:
             message=summary,
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
+            recommended_task_title=recommendation.task_title,
             extras={"attempt_id": attempt_id, "task_id": task.task_id, "status": final_status},
         )
 
@@ -1201,6 +1212,7 @@ class StageRunner:
             message=f"release.md generated: {ship_status}",
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
+            recommended_task_title=recommendation.task_title,
             artifact_paths=[context.artifacts.relative(path)],
             findings=blocking,
         )

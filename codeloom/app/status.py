@@ -43,11 +43,11 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         session = store.branch_session(branch_name)
         if session is None:
             return result
-        result["session"] = _session_summary(session)
-        session_id = int(session["id"])
-        result["open_findings"] = _open_findings(store.findings(session_id))
         tasks_content = artifacts.read("tasks") or ""
         tasks_by_id = {task.task_id: task for task in parse_tasks(tasks_content)}
+        result["session"] = _session_summary(session, tasks_by_id)
+        session_id = int(session["id"])
+        result["open_findings"] = _open_findings(store.findings(session_id))
         result["latest_attempts"] = _latest_attempts(store.attempts(session_id), tasks_by_id)
     except Exception as exc:
         result["status"] = "failed"
@@ -68,11 +68,14 @@ def _artifact_statuses(artifacts: MarkdownArtifactStore) -> dict[str, dict[str, 
     return statuses
 
 
-def _session_summary(session: dict[str, Any]) -> dict[str, Any]:
+def _session_summary(session: dict[str, Any], tasks_by_id: dict[str, Any]) -> dict[str, Any]:
+    recommended_task_id = session.get("recommended_task_id")
+    recommended_task = tasks_by_id.get(str(recommended_task_id)) if recommended_task_id else None
     return {
         "id": session.get("id"),
         "recommended_next": session.get("recommended_next"),
-        "recommended_task_id": session.get("recommended_task_id"),
+        "recommended_task_id": recommended_task_id,
+        "recommended_task_title": recommended_task.title if recommended_task else None,
         "active_hashes": {
             "spec": session.get("active_spec_hash"),
             "plan": session.get("active_plan_hash"),

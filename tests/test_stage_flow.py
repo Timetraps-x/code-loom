@@ -105,11 +105,13 @@ def test_mock_stage_flow_reaches_ship(tmp_path):
     tasks_response = run_stage(repo, "tasks")
     assert tasks_response.recommended_next == "/loom-do T1"
     assert tasks_response.recommended_task_id == "T1"
+    assert tasks_response.recommended_task_title == "Implement current CodeLoom requirement"
 
     first = run_stage(repo, "do", task_id="T1")
     assert first.status == "ok"
     assert first.recommended_next == "/loom-do T2"
     assert first.recommended_task_id == "T2"
+    assert first.recommended_task_title == "Verify current CodeLoom requirement"
 
     second = run_stage(repo, "do", task_id="T2")
     assert second.status == "ok"
