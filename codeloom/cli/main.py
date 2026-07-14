@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from codeloom import __version__
 from codeloom.app.doctor import run_doctor
 from codeloom.app.constitution import register_constitution
 from codeloom.app.init_project import init_project
@@ -18,6 +19,7 @@ from codeloom.cli.render import emit_data, emit_kernel_response, render_adopt, r
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="codeloom")
+    parser.add_argument("-v", "--version", action="version", version=f"codeloom {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     init_parser = subparsers.add_parser("init")

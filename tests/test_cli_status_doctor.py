@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from codeloom.app.init_project import load_project_config
 from codeloom.cli.main import main
 
@@ -10,6 +12,18 @@ def _write_spec_artifact(repo):
     spec_path = repo / "specs" / "master" / "spec.md"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("# Spec\n\n## Requirement\nCLI spec\n", encoding="utf-8")
+
+
+def test_cli_version_flags(capsys):
+    with pytest.raises(SystemExit) as long_exit:
+        main(["--version"])
+    assert long_exit.value.code == 0
+    assert capsys.readouterr().out.strip() == "codeloom 0.4.3"
+
+    with pytest.raises(SystemExit) as short_exit:
+        main(["-v"])
+    assert short_exit.value.code == 0
+    assert capsys.readouterr().out.strip() == "codeloom 0.4.3"
 
 def test_cli_defaults_to_human_output(tmp_path, capsys):
     exit_code = main(["init", "--cwd", str(tmp_path)])
