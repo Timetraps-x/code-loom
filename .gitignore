@@ -13,7 +13,7 @@ docs/research/
 specs/
 /.codegraph/
 
-# Local research artifacts (not release inputs)
+# Local research and maintainer-only validation assets (not release inputs)
 /.tmp_*
 /.tmp_arxiv/
 /.tmpclaim/
@@ -23,3 +23,13 @@ specs/
 /metr.pdf
 /metr.txt
 /story_mapping_reference.png
+/codeloom/quality_cases/adopt/
+/codeloom/quality_cases/do/
+/codeloom/quality_cases/plan/
+/codeloom/quality_cases/ship/
+/codeloom/quality_cases/spec/
+/codeloom/quality_cases/tasks/
+/codeloom/spec_evals/
+/tests/test_spec_artifact_evals.py
+/tests/test_spec_eval_cli.py
+/tests/test_spec_evals.py

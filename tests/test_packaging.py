@@ -11,20 +11,27 @@ BUILD_ROOT = ROOT / "build" / "lib" / "codeloom"
 
 QUALITY_CASES = {
     "positive": "python-fastapi.md",
-    "spec": "export-field-correction.md",
-    "plan": "closed-local-correction.md",
-    "tasks": "simple-local-correction.md",
-    "do": "simple-local-correction.md",
-    "ship": "delivery-conclusion.md",
-    "adopt": "mature-single-stack.md",
 }
+
+LOCAL_ONLY_PACKAGE_PREFIXES = (
+    "quality_cases/adopt/",
+    "quality_cases/do/",
+    "quality_cases/plan/",
+    "quality_cases/ship/",
+    "quality_cases/spec/",
+    "quality_cases/tasks/",
+    "spec_evals/",
+)
 
 
 def _managed_files(root: Path) -> dict[str, bytes]:
     return {
         path.relative_to(root).as_posix(): path.read_bytes()
         for path in root.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix != ".pyc"
+        and not path.relative_to(root).as_posix().startswith(LOCAL_ONLY_PACKAGE_PREFIXES)
     }
 
 
@@ -51,3 +58,6 @@ def test_packaged_resources_are_readable():
 def test_build_package_matches_source_package():
     assert BUILD_ROOT.is_dir(), "run `uv build --wheel` before the release test suite"
     assert _managed_files(BUILD_ROOT) == _managed_files(PACKAGE_ROOT)
+
+    for prefix in LOCAL_ONLY_PACKAGE_PREFIXES:
+        assert not (BUILD_ROOT / prefix).exists()
