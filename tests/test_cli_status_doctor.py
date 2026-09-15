@@ -18,12 +18,12 @@ def test_cli_version_flags(capsys):
     with pytest.raises(SystemExit) as long_exit:
         main(["--version"])
     assert long_exit.value.code == 0
-    assert capsys.readouterr().out.strip() == "codeloom 0.5.0"
+    assert capsys.readouterr().out.strip() == "codeloom 0.5.1"
 
     with pytest.raises(SystemExit) as short_exit:
         main(["-v"])
     assert short_exit.value.code == 0
-    assert capsys.readouterr().out.strip() == "codeloom 0.5.0"
+    assert capsys.readouterr().out.strip() == "codeloom 0.5.1"
 
 def test_cli_defaults_to_human_output(tmp_path, capsys):
     exit_code = main(["init", "--cwd", str(tmp_path)])

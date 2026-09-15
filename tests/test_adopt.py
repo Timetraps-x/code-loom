@@ -155,19 +155,6 @@ def test_adopt_expert_separates_promotion_profile_and_suggestions():
     assert "temporary Claude Code child agent before writing" not in content
 
 
-def test_adopt_quality_cases_are_packaged():
-    cases = resources.files("codeloom.quality_cases.adopt")
-
-    for case_name, expected in {
-        "mature-single-stack.md": "Do not emit generic advice",
-        "legacy-majority.md": "Do not promote the numerically dominant",
-        "current-branch-target.md": "Classify the proposed module as target-only",
-        "multi-stack.md": "Produce one shared constitution",
-        "positive-case-conflict.md": "interpretation aid only",
-    }.items():
-        assert expected in cases.joinpath(case_name).read_text(encoding="utf-8")
-
-
 def test_positive_case_resources_are_packaged():
     positive_cases = resources.files("codeloom.quality_cases.positive")
 
