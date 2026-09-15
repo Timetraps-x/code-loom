@@ -1,131 +1,63 @@
-# Release Plan
+# Release
 
 based_on_spec_hash: `<hash>`
 based_on_plan_hash: `<hash>`
 based_on_tasks_hash: `<hash>`
+based_on_execution_hash: `<hash>`
 
-## 1. Release Conclusion
+## 1. Delivery Conclusion
 
-- Status: ready | blocked | partial
-- Decision reason:
-- Required next action:
+- Release readiness: ready | blocked
+- Goal result confidence: proven | partially_proven | not_proven
+- Conclusion:
 
-State whether this change is ready to release. If readiness cannot be determined, write `blocked` or `partial` and explain what is missing.
+State what is ready to release and why. Keep the actual release-owner decision separate from this readiness analysis.
 
-## 2. Change Summary
+## 2. Delivered Outcomes and Boundaries
 
-Organize by user or system impact, not just by files changed.
+Organize by observable user or system result, not by changed files alone. Include a boundary only when it materially qualifies the delivered result.
 
-| Area | Change | Related Tasks | Notes |
-|---|---|---|---|
-| Backend / API / CLI | <Change> | T1 | <Notes> |
-| Frontend / UI | <Change> | T2 | <Notes> |
-| SQL / Data | <Change> | T3 | <Notes> |
-| Configuration / Permissions | <Change> | T4 | <Notes> |
-| Testing / Verification | <Change> | T5 | <Notes> |
+| Outcome | Delivered Result | Boundaries / Preserved Behavior |
+|---|---|---|
+| <User or system outcome> | <What now occurs> | <Material boundary or N/A> |
 
-## 3. Completed Tasks
+## 3. Proof and Limitations
 
-| Task | Lane | Complexity | Status | Evidence |
+Do not make completed tasks or successful commands stand in for goal achievement. State the strongest supported proof and what it cannot establish.
+
+| Goal / Result | Conclusion | Evidence Strength | Evidence | Limitation |
 |---|---|---|---|---|
-| T1 | build | small | implemented / blocked / not_run | <Evidence path or note> |
-| T2 | verify | non-trivial | verified / blocked / not_verified / not_run | <Evidence path or note> |
+| <Goal or acceptance result> | proven / partially_proven / not_proven | static / automated / real-flow / experiment / human-needed | <Evidence reference> | <Remaining limitation or N/A> |
 
-## 4. Verification Summary
+## 4. Release-impact Actions
 
-Summarize verification results without inventing verification that was not run.
+Include only involved SQL/data, configuration, permissions, UI/menu, external-system, rollout, or manual actions. If none are involved, write one concise `N/A` statement rather than completing a fixed checklist.
 
-| Acceptance | Result | Evidence |
+| Impact / Action | Timing or Owner | Verification / Rollback Note |
 |---|---|---|
-| AC-1 | PASS / BLOCKED / NOT_RUN / N/A | <Evidence> |
-| AC-2 | PASS / BLOCKED / NOT_RUN / N/A | <Evidence> |
+| <Material action or N/A> | <When or who> | <Check, rollback, or limitation> |
 
-### 4.1 Not Verified
+## 5. Risks, Manual Actions, and Owner Decisions
 
-| Item | Reason | Required Decision / Next Action |
-|---|---|---|
-| <Item or N/A> | <Reason> | <Action> |
-## 5. Release Preconditions
+A risk is accepted only when an identified owner explicitly accepted it. Routine release execution belongs here without becoming an implementation gap.
 
-If release actions are not involved, write `N/A because ...`.
+| Type | Item | Blocking | Owner / Acceptance | Required Handling |
+|---|---|---|---|---|
+| risk / limitation / manual action / owner decision | <Item or N/A> | yes / no | <Owner, acceptance evidence, or N/A> | <Handling> |
 
-- [ ] Build passed
-- [ ] Automated tests passed
-- [ ] Manual verification completed
-- [ ] SQL execute block confirmed
-- [ ] SQL rollback block confirmed
-- [ ] Configuration / switch confirmed
-- [ ] Permission / role impact confirmed
-- [ ] Monitoring / log observation points confirmed
-- [ ] Stakeholder or business confirmation obtained
+## 6. Rollback and Monitoring
 
-## 6. Configuration / Switches
+Include this section only when rollback or runtime observation is material. State any action that is not automatically reversible.
 
-If not involved, write `N/A because ...`.
+- Rollback:
+- Monitoring signal:
+- Response boundary:
+- Not automatically reversible:
 
-| Key | Value | Timing | Notes |
-|---|---|---|---|
-| <config key> | <value> | before release / after deploy / rollback | <Notes> |
+## 7. Evidence References
 
-## 6.1 Attempt Changes / Runtime Evidence
+List only the compact references needed to support the conclusions above; do not dump the complete runtime history.
 
-| Kind | Paths / Evidence | Notes |
-|---|---|---|
-| Attempt changes | <attempt-changes ref or N/A> | <Notes> |
-| Runtime logs | <stdout/stderr ref or N/A> | <Notes> |
-| Verification summary | <verification-summary ref or N/A> | <Notes> |
-| SQL / Data / Configuration / Permissions / UI | <evidence ref or N/A> | <Notes> |
-## 7. SQL / Data Changes
-
-If not involved, write `N/A because ...`.
-
-### 7.1 Execute
-
-- <Execute block note or file path>
-
-### 7.2 Rollback
-
-- <Rollback block note or file path>
-
-### 7.3 Check
-
-- <Check block note or file path>
-
-## 8. Release Steps
-
-If this is only a code merge with no extra release step, write `N/A because ...`.
-
-1. <Step 1>
-2. <Step 2>
-
-## 9. Rollback Plan
-
-Describe how to revert if release fails. If automatic rollback is not possible, state that clearly.
-
-1. <Rollback step 1>
-2. <Rollback step 2>
-
-## 10. Runtime Risks and Monitoring
-
-| Risk | Signal | Response |
-|---|---|---|
-| <Risk> | <Observed signal> | <Response> |
-
-## 11. Known Gaps and Accepted Risks
-
-Risks can be accepted only when the user or release owner explicitly accepted them. Do not infer acceptance from missing evidence.
-
-| Gap / Risk | Blocking | Accepted By | Decision |
-|---|---|---|---|
-| <Gap or risk> | yes / no | <Owner or N/A> | <Handling decision> |
-
-## 12. Not Automatically Reversible
-
-- <Example: business records created, data migrated, external systems notified>
-
-## 13. Final Readiness
-
-- ready_for_release: yes / no
-- blockers:
-- manual_actions:
-- owner_decisions:
+- Verification:
+- Attempt changes / runtime evidence:
+- Other material evidence:

@@ -1,171 +1,90 @@
-# <Requirement Name> Technical Plan
+# <Requirement Name> Plan
 
 based_on_spec_hash: `<spec-hash>`
 
-## 1. Background
+Use this as a flexible delivery guide, not a checklist or schema. A completed Plan is a readable implementation-level design in which accepted requirement → abstract model and protected truth → enforcing mechanism → current-to-target project landing → cross-layer concrete design → observable scenario evidence. Do not add `N/A` sections or technical inventory for completeness. A small closed correction may merge sections and omit unrelated surfaces and diagrams.
 
-Describe how this plan bridges the spec into system design facts: modules, interfaces, pages, data, permissions, runtime paths, verification, and rollback strategy.
+`based_on_spec_hash` identifies the accepted Spec artifact revision; it does not replace readable traceability.
 
-## 2. Goals and Non-Goals
+## 1. Design Basis and Route
 
-### 2.1 Goals
+State the accepted results, prohibited consequences, scope boundaries, confirmed decisions, and only the current-project or external facts that change the design. Explain what the evidence proves, why it applies, and where it remains insufficient; do not reproduce the full Spec or inventory the repository.
 
-- <Goal 1>
+Summarize the target capability model and the overall current-to-target route. Existing paths are not automatically correct design. Make readable which behavior is preserved as evidenced correct coverage, which target change reuses, extends, corrects, replaces, or adds a responsibility, and which real difference remains intentionally separate. These are design judgments, not required status fields.
 
-### 2.2 Non-Goals
+## 2. Business Implementation Design
 
-- <Explicitly out-of-scope work>
+Organize the Plan around coherent capabilities or mechanisms, not technical layers, pages, tables, APIs, Jobs, or files. Repeat the following design block only for material capability slices. Several accepted results may share one block; a simple closed correction may express the whole design in one concise narrative.
 
-## 3. Current State
+### <Capability / Mechanism>
 
-Describe the real current code and data paths. Prioritize critical files, entry points, interfaces, tables, permissions, configuration, external dependencies, and known issues.
+#### Result, boundary, and counterexample
 
-### 3.1 <Current State Group>
+<Identify the accepted result and scope, actor/trigger, representative scenario, and smallest wrong or prohibited result this design must make unreachable.>
 
-- `<path/or/symbol>`: <Current behavior>
+#### Abstract model and protected truths
 
-## 4. Target Design
+<Define the stable capability and work contexts; core concepts; authoritative, derived, attached, historical, and external snapshot facts; lifecycle and legal transitions; fact/judgment/state/side-effect owners; permissions, consumers, invariants, shared variation axes, and differences that must remain separate. Explain the selected model and decisive trade-off.>
 
-### 4.1 Component Impact
+Do not substitute physical pages, tables, modules, or class names for this model. A common model needs shared truth, lifecycle, authority, responsibility, invariant, or real change pressure; a split needs a real authority, lifecycle, permission, query/evolution, or non-coexisting-fact boundary.
 
-When the change crosses more than two modules, pages, controllers, services, tables, external systems, or runtime stages, provide a component diagram. For a narrow single-point change, write `N/A because ...`.
+#### Enforcing mechanism
 
-```plantuml
-@startuml
-skinparam componentStyle rectangle
-actor "User/Caller" as User
-component "Entry/Page/API" as Entry
-component "Business Logic" as Service
-database "Data/State" as DB
-User --> Entry
-Entry --> Service
-Service --> DB
-@enduml
+<Close the applicable causal chain: `trigger/actor → authoritative fact/observation → judgment/current state → accountable command/owner → atomic local change → external collaboration/wait → duplicate/failure/retry/recovery/terminal meaning → observable result and allowed/rejected next action`. State the gates and invariants that make the counterexample unreachable.>
+
+#### Current-project landing
+
+For each material landing, make the following legible in prose, bullets, or a compact table:
+
+```text
+current path and semantic owner
+→ established evidence and its limit
+→ reuse / extend / correct / replace / add / preserve difference
+→ concrete target responsibility, contract, state, or data path
+→ affected callers, consumers, or historical data
+→ protected truth, invariant, or counterexample
 ```
 
-### 4.2 Existing System Path
+Name a real module, service, class, API, table, query, page, Job, message, or integration only with its role in the mechanism. If the repository fact is not yet established, qualify the design recommendation and the evidence needed; do not invent a landing point.
 
-Describe the existing code, data, page, permission, command, or runtime path that should be modified. If a new path is required, explain why the current path cannot safely carry the change.
+#### Material cross-layer design
 
-### 4.3 Boundary Map
+A technical surface is material when omitting it would let implementation choose a fact meaning, state transition, permission, external consequence, consistency rule, evolution boundary, cost boundary, or proof interpretation that can change correctness. Design every triggered surface concretely and omit the rest.
 
-| Boundary | Owner / Current Path | Target Rule | Must Not Cross |
-|---|---|---|---|
-| <system/data/interface boundary> | <owner/path> | <target behavior> | <out-of-scope or forbidden change> |
+When applicable, include only the decisions this mechanism needs:
 
-### 4.4 <Key Target Design Point>
+- **UI/work surface:** actor and entry, visible/editable facts, state-dependent actions, blocked/recovery feedback, client visibility, server authorization.
+- **Command/query/API/RPC/Job:** owner and consumers, inputs, results and refusals, state effects, re-entry, duplicate, timeout, retry, and terminal meaning.
+- **Data/schema/read model:** authority, relations and keys, history or snapshot meaning, states and constraints, write owner, migration/backfill, and read projection.
+- **SQL/DAO/query:** filter intersection, empty-set behavior, deduplication, aggregation, pagination, batch loading, and index direction where they protect correctness or a stated cost boundary.
+- **Module/code responsibility:** existing semantic owner, justified new boundary, dependency direction, and responsibilities that cannot be duplicated or bypassed.
+- **Transaction/concurrency/idempotency/integration:** atomic boundary, competing writes, conditional transition or lock, business idempotency identity, message/callback correlation, delivery/order/duplicate behavior, external unknown result, and recovery owner.
+- **Performance/evolution/observability:** only the material scale, latency, fan-out, compatibility, rollout/rollback, audit, logs, metrics, alerts, or correlation tied to this mechanism.
+- **Verification design:** future evidence for normal and prohibited results plus applicable permission, duplicate, concurrent, asynchronous, migration, recovery, and performance scenarios; state what each observation can and cannot prove.
 
-Describe target entry points, permissions, data flow, validation, boundaries, and invariants.
+UI, contracts, code ownership, stored state, queries, Jobs, messages, external results, diagrams, and proof must use the same facts, states, owners, and terminal meanings.
 
-## 5. Interaction and Flow Design
+#### PlantUML design evidence
 
-When there are multi-step calls, page interactions, service collaboration, async flows, permission chains, or side effects, provide a flow or sequence diagram.
+Include the smallest useful PlantUML diagram when correctness depends on a material:
 
-```plantuml
-@startuml
-actor User as U
-participant "Entry" as Entry
-participant "Service" as S
-database "Data" as DB
-U -> Entry : <operation>
-Entry -> S : <request>
-S -> DB : <read/write>
-DB --> S : <result>
-S --> Entry : <response>
-Entry --> U : <result>
-@enduml
-```
+- object relationship, cardinality, key, or authority relation;
+- state lifecycle, legal gate, illegal transition, or recovery state;
+- cross-system synchronous/asynchronous sequence, callback, retry, or compensation;
+- multi-role or multi-entry workflow.
 
-## 6. Data, State, and Consistency Design
+Choose a relationship, state, sequence, or activity diagram that exposes the actual decision. A diagram is evidence, not decoration or a quota. Omit it for a closed local correction when the relevant relationship and control are already unambiguous. Diagram names and transitions must match the abstract model, concrete landing, and scenarios.
 
-Describe the fields, states, migrations, relationships, invariants, and consistency requirements involved in this change. State which null/fallback cases are real external boundaries, legal business states, historical dirty data, or invariant violations that should not be hidden.
-When there is migration, permission switching, release/rollback transition, lifecycle change, or a state machine, provide a state diagram.
+#### Scenario evidence
 
-```plantuml
-@startuml
-[*] --> Current : Current state
-Current --> Target : Apply change
-Target --> Verified : Verification passed
-Target --> Current : Rollback
-Verified --> [*]
-@enduml
-```
+<Show representative `input facts → action → persisted fact/state → external result or failure → next action allowed/rejected → observable result`. Include the success chain, the Spec-prohibited chain, and only applicable duplicate, authorization, concurrency, asynchronous, migration, failure, or recovery chains. Static existence of a surface or HTTP success is not proof of a business result.>
 
-## 7. API / Page / Interface Contract Design
+## 3. Shared Cross-Block Decisions
 
-When this touches an API, page, permission, configuration, CLI, file format, or external contract, use a current/target comparison table.
+Collect a schema, permission, contract, transaction, middleware, migration, performance, observability, or verification decision here only when several design blocks genuinely share it. For each shared decision, identify the participating mechanisms and the facts or invariants it protects. Do not introduce technical surfaces here that have no explained role in a design block.
 
-| Capability | Current | Target |
-|---|---|---|
-| <Capability> | <Current behavior> | <Target behavior> |
+## 4. Evidence and Implementation Freedom
 
-## 8. Concurrency, Transactions, and Consistency Design
+Distinguish established project facts, evidence-backed recommendations, bounded validation assumptions, and evidence gaps. A missing fact that prevents a correct model, mechanism, or landing must be resolved before presenting a final Plan; do not hide it in an assumption or unknown section. Keep ordinary reversible choices open only when they cannot change the accepted result, model, protected truth, public/data contract, consistency, evolution, or proof meaning.
 
-Describe concurrency, transactions, idempotency, repeat execution, failure recovery, and partial-success semantics. If not relevant, write `N/A because ...`.
-
-| Risk | Control | Verification |
-|---|---|---|
-| <Consistency risk> | <Control> | <Verification method> |
-
-## 9. Risk Controls
-
-| Risk | Control | Verification |
-|---|---|---|
-| <Risk> | <Control> | <Verification evidence> |
-
-## 10. Release and Rollback
-
-Describe release order and rollback order for code, configuration, data, permissions, or migrations. If shared environments or data changes are not involved, write `N/A because ...`.
-
-### 10.1 Release Order
-
-1. <Step>
-
-### 10.2 Rollback Order
-
-1. <Step>
-
-## 11. Validation Matrix
-
-| Area | Scenario | Verification Method | Evidence |
-|---|---|---|---|
-| Changed Path | <Direct behavior changed by this plan> | <Verification method> | <Evidence type> |
-| Upstream Entry | <Page/API/command/scheduled entry> | <Verification method> | <Evidence type> |
-| Downstream Consumer | <Queue/file/email/external/shared consumer> | <Verification method or N/A> | <Evidence type> |
-| Shared Component Regression | <Shared mapper/service/template/permission/config> | <Verification method or N/A> | <Evidence type> |
-| State & Failure | <Idempotency/retry/rollback/partial failure> | <Verification method or N/A> | <Evidence type> |
-| Delivery | <SQL/config/permission/menu/rollback> | <Verification method or N/A> | <Evidence type> |
-
-Recommended minimum automated verification:
-
-- <Command or N/A>
-
-Recommended minimum manual verification:
-
-- <Page, API, data, or flow check>
-
-## 12. Key Decisions
-
-- <Decision already made that affects design, verification, or rollback>
-
-## 13. Alternatives and Tradeoffs
-
-### 13.1 <Alternative>
-
-Rejected because: <Reason>
-
-## 14. Plan Gaps and Blockers
-
-### 14.1 Resolved Open Questions
-
-- <OQ or None>
-
-### 14.2 Blockers
-
-- None / <Issue that blocks later stages>
-
-### 14.3 Notes
-
-- <Non-blocking note that affects design understanding, verification, or delivery judgment>
-
-Do not write task slicing rationale, builder instructions, task execution strategy, execution order, or do-stage boundaries in this plan.
+Do not write task slicing, file lists, execution order, function bodies, DDL or source patches, commands, executed-test claims, release conclusions, or operational runbooks.

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 
+from codeloom.app import stages
+from codeloom.app.constitution import register_constitution
+from codeloom.app.status import get_status
 from codeloom.persistence.sqlite import SQLiteStore
+from codeloom.stores.markdown import MarkdownArtifactStore
 from tests.helpers import init_repo, run_stage, write_project_config
 
 
@@ -28,12 +33,18 @@ def _write_host_tasks(repo, branch="master"):
         "- [ ] T1: Build host task\n"
         "  - Lane: build\n"
         "  - Complexity: small\n"
-        "  - Covered by: T2\n\n"
+        "  - Revision: 1\n"
+        "  - Context: `C:host-task` through `D:host-task-design`; establish the host task result.\n"
+        "  - Implementation direction: host/service.py:apply; critical path before T2.\n"
+        "  - Boundaries: preserve host contract; stop after the local state transition.\n"
+        "  - Handoff: Covered by T2 for the host task regression surface.\n\n"
         "## verify\n\n"
         "- [ ] T2: Verify host task\n"
         "  - Lane: verify\n"
         "  - Complexity: non-trivial\n"
-        "  - Validates: T1\n",
+        "  - Revision: 1\n"
+        "  - Context: `C:host-task` through `D:host-task-design`; validate T1.\n"
+        "  - Handoff: Validates T1 with host task regression evidence.\n",
         encoding="utf-8",
     )
 
@@ -59,18 +70,43 @@ def _commit_all(repo, message="initial"):
 
 
 def _complete_build_with_passed_review(repo, attempt_id, **kwargs):
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(attempt_id))
-    assert review.status == "ok"
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(attempt_id))
+    assert sealed.status == "ok"
+    recorded = run_stage(
+        repo,
+        "do",
+        action="record-review",
+        attempt_id=str(attempt_id),
+        seal_revision=str(sealed.extras["seal_revision"]),
+        status="pass",
+        review_summary="No blocking findings in the host-provided attempt-scoped diff.",
+    )
+    assert recorded.status == "ok"
     return run_stage(
         repo,
         "do",
         action="complete",
         attempt_id=str(attempt_id),
         status="implemented",
-        review_status="pass",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
         **kwargs,
     )
+
+def _complete_host_tasks(repo):
+    build = run_stage(repo, "do", task_id="T1", action="begin")
+    assert _complete_build_with_passed_review(repo, build.extras["attempt_id"]).status == "ok"
+    verify = run_stage(repo, "do", task_id="T2", action="begin")
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(verify.extras["attempt_id"]),
+        status="verified",
+        summary="verified T2",
+        verification_summary='{"status":"verified"}',
+    )
+    assert completed.status == "ok"
+
 
 def _prepare_host_repo(tmp_path):
     repo = init_repo(tmp_path)
@@ -81,20 +117,78 @@ def _prepare_host_repo(tmp_path):
     return repo
 
 
-def _assert_host_artifact_required(response, stage, artifact_path, main_agent, reviewer_agent=None):
-    assert response.status == "blocked"
-    assert response.errors == ["host_artifact_required"]
+def _assert_host_artifact_handoff(response, stage, artifact_path, main_agent, reviewer_agent=None):
+    assert response.status == "noop"
+    assert response.errors == []
     assert response.recommended_next == f"/loom-{stage}"
     assert response.artifact_paths == [artifact_path]
+    assert response.extras["handoff"] == "author_artifact"
     assert response.extras["stage"] == stage
     assert response.extras["main_agent"] == main_agent
     assert response.extras["reviewer_agent"] == reviewer_agent
+    assert response.extras["constitution"]["path"] == ".loom/constitution.md"
+    assert response.extras["constitution"]["seeded"] is True
+    assert response.extras["constitution"]["usable"] is False
+    assert response.extras["constitution"]["advisory"] == "continue_without_constitution"
+    assert response.extras["project_profile"] == {
+        "languages": [],
+        "frameworks": [],
+        "modules": [],
+        "commands": {"test": "", "lint": "", "typecheck": "", "build": ""},
+    }
     assert response.extras["artifact_path"] == artifact_path
-    assert response.extras["register_command"] == f"loom stage {stage} --branch master --arg artifact_file={artifact_path}"
+    expected_command = f"loom stage {stage} --branch master --arg artifact_file={artifact_path}"
+    if stage == "ship":
+        ship_input_hash = response.extras["ship_input_hash"]
+        assert response.extras["mechanical_state"] == "complete"
+        assert response.extras["ship_packet"]["mechanical_state"] == "complete"
+        expected_command += f" --arg ship_input_hash={ship_input_hash}"
+    assert response.extras["register_command"] == expected_command
 
 
 def _write_host_release(repo, branch="master"):
     _host_artifact_dir(repo, branch).joinpath("release.md").write_text("# Release\n\n## Result\nHost release\n", encoding="utf-8")
+
+
+def test_host_handoffs_use_registered_custom_constitution_and_project_profile(tmp_path):
+    repo = init_repo(tmp_path)
+    write_project_config(repo, runtime="claude-code", test_command="python -m pytest -q")
+    project_path = repo / ".loom" / "project.yml"
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8").replace(
+            "commands:\n",
+            'profile:\n  languages: "Python, TypeScript"\n  frameworks: "FastAPI, React"\n  modules: "api, web"\n\ncommands:\n',
+        ),
+        encoding="utf-8",
+    )
+    custom = repo / ".loom" / "governance" / "engineering.md"
+    custom.parent.mkdir(parents=True)
+    custom.write_text("# Engineering Rules\n\n- API services own durable transitions.\n", encoding="utf-8")
+    assert register_constitution(repo, ".loom/governance/engineering.md")["status"] == "ok"
+
+    spec_handoff = run_stage(repo, "spec")
+
+    assert spec_handoff.status == "noop"
+    assert spec_handoff.extras["constitution"]["path"] == ".loom/governance/engineering.md"
+    assert spec_handoff.extras["constitution"]["usable"] is True
+    assert spec_handoff.extras["constitution"]["advisory"] is None
+    assert spec_handoff.extras["project_profile"] == {
+        "languages": ["Python", "TypeScript"],
+        "frameworks": ["FastAPI", "React"],
+        "modules": ["api", "web"],
+        "commands": {"test": "python -m pytest -q", "lint": "", "typecheck": "", "build": ""},
+    }
+
+    _register_host_artifacts(repo)
+    _init_git_repo(repo)
+    _commit_all(repo)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert begin.status == "ok"
+    assert begin.extras["constitution"]["path"] == ".loom/governance/engineering.md"
+    assert begin.extras["constitution"]["usable"] is True
+    assert begin.extras["project_profile"]["frameworks"] == ["FastAPI", "React"]
+
 
 def test_mock_stage_flow_reaches_ship(tmp_path):
     repo = init_repo(tmp_path)
@@ -105,11 +199,13 @@ def test_mock_stage_flow_reaches_ship(tmp_path):
     tasks_response = run_stage(repo, "tasks")
     assert tasks_response.recommended_next == "/loom-do T1"
     assert tasks_response.recommended_task_id == "T1"
+    assert tasks_response.recommended_task_title == "Implement current CodeLoom requirement"
 
     first = run_stage(repo, "do", task_id="T1")
     assert first.status == "ok"
     assert first.recommended_next == "/loom-do T2"
     assert first.recommended_task_id == "T2"
+    assert first.recommended_task_title == "Verify current CodeLoom requirement"
 
     second = run_stage(repo, "do", task_id="T2")
     assert second.status == "ok"
@@ -126,6 +222,25 @@ def test_mock_stage_flow_reaches_ship(tmp_path):
     assert ship.recommended_next is None
     assert repo.joinpath("specs", "master", "release.md").exists()
 
+def test_mock_plan_header_matches_registered_spec_revision(tmp_path):
+    repo = init_repo(tmp_path)
+    write_project_config(repo, runtime="mock")
+
+    assert run_stage(repo, "spec", requirement="Bind a device").status == "ok"
+    assert run_stage(repo, "plan").status == "ok"
+
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    spec_revision = store.latest_artifact_revision(int(session["id"]), "spec")
+    plan_revision = store.latest_artifact_revision(int(session["id"]), "plan")
+    assert spec_revision is not None
+    assert plan_revision is not None
+    spec_hash = spec_revision["content_hash"]
+    plan = repo.joinpath("specs", "master", "plan.md").read_text(encoding="utf-8")
+
+    assert f"based_on_spec_hash: `{spec_hash}`" in plan
+    assert plan_revision["based_on_spec_hash"] == spec_hash
 
 def test_mock_verify_without_evidence_blocks_ship_path(tmp_path):
     repo = init_repo(tmp_path)
@@ -153,25 +268,34 @@ def test_claude_code_host_artifact_stages_require_artifact_file(tmp_path):
     write_project_config(repo, runtime="claude-code")
     _write_host_spec(repo)
 
-    _assert_host_artifact_required(run_stage(repo, "spec"), "spec", "specs/master/spec.md", "spec-analyzer", "spec-reviewer")
+    _assert_host_artifact_handoff(run_stage(repo, "spec"), "spec", "specs/master/spec.md", "spec-analyzer", "spec-reviewer")
 
     registered_spec = run_stage(repo, "spec", artifact_file="specs/master/spec.md")
     assert registered_spec.status == "ok"
     _write_host_plan(repo)
 
-    _assert_host_artifact_required(run_stage(repo, "plan"), "plan", "specs/master/plan.md", "plan-architect", "plan-reviewer")
+    _assert_host_artifact_handoff(run_stage(repo, "plan"), "plan", "specs/master/plan.md", "plan-architect", "plan-reviewer")
 
     registered_plan = run_stage(repo, "plan", artifact_file="specs/master/plan.md")
     assert registered_plan.status == "ok"
     _write_host_tasks(repo)
 
-    _assert_host_artifact_required(run_stage(repo, "tasks"), "tasks", "specs/master/tasks.md", "task-planner", "task-reviewer")
+    _assert_host_artifact_handoff(run_stage(repo, "tasks"), "tasks", "specs/master/tasks.md", "task-planner", "task-reviewer")
 
     registered_tasks = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
     assert registered_tasks.status == "ok"
     assert registered_tasks.recommended_next == "/loom-do T1"
 
-    _assert_host_artifact_required(run_stage(repo, "ship"), "ship", "specs/master/release.md", "release-analyzer")
+    before_do = run_stage(repo, "ship")
+    assert before_do.status == "blocked"
+    assert before_do.errors == ["ship_prerequisites_incomplete"]
+    assert before_do.recommended_next == "/loom-do T1"
+    assert before_do.artifact_paths == []
+
+    _init_git_repo(repo)
+    _commit_all(repo)
+    _complete_host_tasks(repo)
+    _assert_host_artifact_handoff(run_stage(repo, "ship"), "ship", "specs/master/release.md", "release-analyzer")
 
 
 def test_claude_code_host_artifact_inputs_do_not_bypass_artifact_file_requirement(tmp_path):
@@ -179,7 +303,7 @@ def test_claude_code_host_artifact_inputs_do_not_bypass_artifact_file_requiremen
     write_project_config(repo, runtime="claude-code")
     _write_host_spec(repo)
 
-    _assert_host_artifact_required(
+    _assert_host_artifact_handoff(
         run_stage(repo, "spec", requirement="Add another visible interaction"),
         "spec",
         "specs/master/spec.md",
@@ -189,7 +313,7 @@ def test_claude_code_host_artifact_inputs_do_not_bypass_artifact_file_requiremen
 
     run_stage(repo, "spec", artifact_file="specs/master/spec.md")
     _write_host_plan(repo)
-    _assert_host_artifact_required(
+    _assert_host_artifact_handoff(
         run_stage(repo, "plan", constraints="Reuse existing map loader"),
         "plan",
         "specs/master/plan.md",
@@ -199,7 +323,7 @@ def test_claude_code_host_artifact_inputs_do_not_bypass_artifact_file_requiremen
 
     run_stage(repo, "plan", artifact_file="specs/master/plan.md")
     _write_host_tasks(repo)
-    _assert_host_artifact_required(
+    _assert_host_artifact_handoff(
         run_stage(repo, "tasks", preference="Split browser validation"),
         "tasks",
         "specs/master/tasks.md",
@@ -214,7 +338,7 @@ def test_claude_code_host_artifact_guard_does_not_create_fallback_files(tmp_path
 
     response = run_stage(repo, "spec")
 
-    _assert_host_artifact_required(response, "spec", "specs/master/spec.md", "spec-analyzer", "spec-reviewer")
+    _assert_host_artifact_handoff(response, "spec", "specs/master/spec.md", "spec-analyzer", "spec-reviewer")
     assert not repo.joinpath("specs", "master", "spec.md").exists()
 
 
@@ -226,6 +350,11 @@ def test_claude_code_host_artifact_file_must_exist(tmp_path):
 
     assert missing_spec.status == "failed"
     assert missing_spec.errors == ["missing_artifact_file"]
+    assert missing_spec.recommended_next == "/loom-spec"
+    assert missing_spec.artifact_paths == ["specs/master/spec.md"]
+    assert missing_spec.extras["handoff"] == "author_artifact"
+    assert missing_spec.extras["artifact_path"] == "specs/master/spec.md"
+    assert missing_spec.extras["register_command"] == "loom stage spec --branch master --arg artifact_file=specs/master/spec.md"
 
 
 def test_claude_code_host_artifact_file_must_match_stage_path(tmp_path):
@@ -239,6 +368,11 @@ def test_claude_code_host_artifact_file_must_match_stage_path(tmp_path):
 
     assert invalid.status == "failed"
     assert invalid.errors == ["invalid_artifact_file_location"]
+    assert invalid.recommended_next == "/loom-spec"
+    assert invalid.artifact_paths == ["specs/master/spec.md"]
+    assert invalid.extras["handoff"] == "author_artifact"
+    assert invalid.extras["artifact_path"] == "specs/master/spec.md"
+    assert invalid.extras["register_command"] == "loom stage spec --branch master --arg artifact_file=specs/master/spec.md"
 
 
 def test_claude_code_host_plan_and_tasks_preserve_missing_prerequisite_errors(tmp_path):
@@ -316,21 +450,112 @@ def test_claude_code_host_preregistered_artifacts_refresh_lineage_on_registratio
 def test_claude_code_host_ship_artifact_file_errors_require_prerequisites_first(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
-    missing_release = run_stage(repo, "ship", artifact_file="specs/master/release.md")
+    before_do = run_stage(repo, "ship", artifact_file="specs/master/release.md")
+    assert before_do.status == "blocked"
+    assert before_do.errors == ["ship_prerequisites_incomplete"]
+    assert before_do.recommended_next == "/loom-do T1"
 
+    _complete_host_tasks(repo)
+    missing_release = run_stage(repo, "ship", artifact_file="specs/master/release.md")
     assert missing_release.status == "failed"
     assert missing_release.errors == ["missing_artifact_file"]
 
 
 def test_claude_code_host_ship_registers_release_artifact_when_present(tmp_path):
     repo = _prepare_host_repo(tmp_path)
+    _complete_host_tasks(repo)
+    handoff = run_stage(repo, "ship")
     _write_host_release(repo)
 
-    release = run_stage(repo, "ship", artifact_file="specs/master/release.md")
+    release = run_stage(
+        repo,
+        "ship",
+        artifact_file="specs/master/release.md",
+        ship_input_hash=handoff.extras["ship_input_hash"],
+    )
 
-    assert release.status == "blocked"
+    assert release.status == "ok"
+    assert release.recommended_next is None
     assert release.artifact_paths == ["specs/master/release.md"]
+    assert release.extras["ship_input_hash"] == handoff.extras["ship_input_hash"]
     assert repo.joinpath("specs", "master", "release.md").read_text(encoding="utf-8").startswith("# Release")
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    revision = store.latest_artifact_revision(int(session["id"]), "ship")
+    assert revision is not None
+    assert revision["based_on_execution_hash"] == handoff.extras["ship_input_hash"]
+    status = get_status(repo, "master")
+    assert status["artifacts"]["ship"]["registered_execution_hash"] == handoff.extras["ship_input_hash"]
+    assert status["artifacts"]["ship"]["content_current"] is True
+
+    current = run_stage(repo, "ship")
+    assert current.status == "ok"
+    assert current.recommended_next is None
+    assert current.extras["idempotent"] is True
+    assert current.extras["ship_input_hash"] == handoff.extras["ship_input_hash"]
+
+
+def test_claude_code_host_rejects_release_when_ship_inputs_change_after_handoff(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    _complete_host_tasks(repo)
+    handoff = run_stage(repo, "ship")
+    _write_host_release(repo)
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    store.add_finding(
+        int(session["id"]),
+        None,
+        "release_constraint",
+        "blocking",
+        "A release constraint changed after Ship preflight",
+        None,
+    )
+
+    stale = run_stage(
+        repo,
+        "ship",
+        artifact_file="specs/master/release.md",
+        ship_input_hash=handoff.extras["ship_input_hash"],
+    )
+
+    assert stale.status == "noop"
+    assert stale.errors == ["ship_inputs_changed"]
+    assert stale.extras["host_recovery"]["user_visible"] is False
+    assert stale.extras["ship_input_hash"] != handoff.extras["ship_input_hash"]
+    assert store.latest_artifact_revision(int(session["id"]), "ship") is None
+
+
+def test_ship_can_route_a_real_delivery_gap_to_upstream_artifact_work(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    premature = run_stage(
+        repo,
+        "ship",
+        action="route",
+        target_stage="tasks",
+        reason="A gap cannot be assessed before Do closes",
+    )
+    assert premature.status == "blocked"
+    assert premature.errors == ["ship_prerequisites_incomplete"]
+    assert premature.recommended_next == "/loom-do T1"
+
+    _complete_host_tasks(repo)
+
+    routed = run_stage(
+        repo,
+        "ship",
+        action="route",
+        target_stage="tasks",
+        reason="Current proof coverage cannot establish the accepted delivery result",
+    )
+
+    assert routed.status == "ok"
+    assert routed.recommended_next == "/loom-tasks"
+    redirected = run_stage(repo, "ship")
+    assert redirected.status == "noop"
+    assert redirected.recommended_next == "/loom-tasks"
+    assert redirected.extras["continuation_source_stage"] == "ship"
 
 
 def test_claude_code_host_registers_absolute_artifact_file(tmp_path):
@@ -356,16 +581,19 @@ def test_spec_stage_treats_bare_text_as_revision_when_spec_exists(tmp_path):
     assert "Initial dashboard requirement" in spec
 
 
-def test_spec_stage_treats_gap_arg_as_revision_when_spec_exists(tmp_path):
+def test_spec_stage_rejects_unsupported_gap_arg_without_overwriting_artifact(tmp_path):
     repo = init_repo(tmp_path)
 
     run_stage(repo, "spec", requirement="Initial dashboard requirement")
+    spec_path = repo.joinpath("specs", "master", "spec.md")
+    existing = spec_path.read_text(encoding="utf-8")
+
     response = run_stage(repo, "spec", gap="Keep the current UI style unchanged")
 
-    assert response.status == "ok"
-    spec = repo.joinpath("specs", "master", "spec.md").read_text(encoding="utf-8")
-    assert "Keep the current UI style unchanged" in spec
-    assert "Initial dashboard requirement" in spec
+    assert response.status == "failed"
+    assert response.errors == ["unsupported_stage_argument"]
+    assert response.recommended_next == "/loom-spec"
+    assert spec_path.read_text(encoding="utf-8") == existing
 
 
 def test_mock_runtime_skips_empty_stderr_and_empty_verify_logs(tmp_path):
@@ -385,7 +613,7 @@ def test_mock_runtime_skips_empty_stderr_and_empty_verify_logs(tmp_path):
     t2 = next(attempt for attempt in attempts if attempt["task_id"] == "T2")
 
     t1_refs = store.runtime_refs(int(t1["id"]))
-    assert [ref["kind"] for ref in t1_refs] == ["stdout"]
+    assert [ref["kind"] for ref in t1_refs] == ["task_packet", "stdout"]
     assert not (repo / ".loom" / "runs" / "master" / "T1-a001-diff.patch").exists()
     assert not (repo / ".loom" / "runs" / "master" / "T1-a001-runtime.stderr.log").exists()
 
@@ -410,11 +638,19 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     assert begin.extras["main_agent"] == "builder"
     assert begin.extras["reviewer_agent"] == "code-reviewer"
     assert begin.extras["complexity"] == "small"
+    assert "Handoff: Covered by T2" in begin.extras["task_definition"]
+    assert begin.extras["task_packet"]["task_id"] == "T1"
+    assert begin.extras["task_packet"]["task_fingerprint"]
+    assert begin.extras["task_packet_hash"]
+    assert begin.extras["task_packet_ref"] == " .loom/runs/master/T1-a001-task-packet.json".strip()
+    assert begin.extras["task_packet_version"] == "2"
+    assert begin.extras["resumed"] is False
     attempt_id = str(begin.extras["attempt_id"])
 
     repeated_begin = run_stage(repo, "do", task_id="T1", action="begin")
     assert repeated_begin.extras["attempt_id"] == begin.extras["attempt_id"]
-
+    assert repeated_begin.extras["task_packet"] == begin.extras["task_packet"]
+    assert repeated_begin.extras["resumed"] is True
     complete_build = _complete_build_with_passed_review(repo, attempt_id, summary="built T1")
     assert complete_build.status == "ok"
     assert complete_build.recommended_next == "/loom-do T2"
@@ -443,7 +679,7 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     build_attempt = next(attempt for attempt in attempts if attempt["task_id"] == "T1")
     build_refs = store.runtime_refs(int(build_attempt["id"]))
     build_ref_kinds = {ref["kind"] for ref in build_refs}
-    assert "attempt_changes" in build_ref_kinds
+    assert {"attempt_changes", "review_summary"} <= build_ref_kinds
     assert {"git_status_begin", "git_status_complete", "diff", "change_inventory"}.isdisjoint(build_ref_kinds)
     verify_attempt = next(attempt for attempt in attempts if attempt["task_id"] == "T2")
     verify_refs = store.runtime_refs(int(verify_attempt["id"]))
@@ -455,6 +691,113 @@ def test_claude_code_host_runtime_begin_complete_flow(tmp_path):
     assert verification["status"] == "passed"
     assert verification["summary_ref"] == verification_summary_ref["path"]
 
+def test_claude_code_begin_reports_current_lineage_drift_without_blocking_running_attempt(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert begin.status == "ok"
+    assert begin.extras["lineage_advisories"] == []
+
+    spec_path = repo / "specs" / "master" / "spec.md"
+    spec_path.write_text(
+        spec_path.read_text(encoding="utf-8") + "\n## Later requirement\nUpdated after plan registration.\n",
+        encoding="utf-8",
+    )
+
+    resumed = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert resumed.status == "ok"
+    assert resumed.extras["attempt_id"] == begin.extras["attempt_id"]
+    assert resumed.extras["lineage_advisories"] == [
+        {
+            "message": "plan.md is based on an older spec.md",
+            "recommended_next": "/loom-plan",
+            "scope": "artifact_lineage",
+        }
+    ]
+
+def test_claude_code_begin_keeps_running_attempt_when_packet_context_changes(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    first_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace(
+            "establish the host task result.",
+            "establish the host task result with current caller evidence.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    resumed = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert resumed.status == "ok"
+    assert resumed.extras["attempt_id"] == first_begin.extras["attempt_id"]
+    assert resumed.extras["task_packet"] == first_begin.extras["task_packet"]
+
+
+def test_claude_code_begin_ignores_unrelated_task_fingerprint_change(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    first_begin = run_stage(repo, "do", task_id="T1", action="begin")
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace(
+            "- Revision: 1\n  - Context: `C:host-task` through `D:host-task-design`; validate T1.",
+            "- Revision: 2\n  - Context: `C:host-task` through `D:host-task-design`; validate T1.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    resumed = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert resumed.status == "ok"
+    assert resumed.extras["attempt_id"] == first_begin.extras["attempt_id"]
+
+
+
+
+def test_stage_request_reuses_artifact_task_and_revision_facts(tmp_path, monkeypatch):
+    repo = _prepare_host_repo(tmp_path)
+    read_counts: dict[str, int] = {}
+    hash_counts: dict[str, int] = {}
+    parse_count = 0
+    revision_query_count = 0
+    original_read = MarkdownArtifactStore.read
+    original_hash = MarkdownArtifactStore.content_hash
+    original_parse = stages.parse_tasks
+    original_revisions = SQLiteStore.latest_artifact_revisions
+
+    def tracking_read(self, kind):
+        read_counts[kind] = read_counts.get(kind, 0) + 1
+        return original_read(self, kind)
+
+    def tracking_hash(content):
+        hash_counts[content] = hash_counts.get(content, 0) + 1
+        return original_hash(content)
+
+    def tracking_parse(content):
+        nonlocal parse_count
+        parse_count += 1
+        return original_parse(content)
+
+    def tracking_revisions(self, session_id):
+        nonlocal revision_query_count
+        revision_query_count += 1
+        return original_revisions(self, session_id)
+
+    monkeypatch.setattr(MarkdownArtifactStore, "read", tracking_read)
+    monkeypatch.setattr(MarkdownArtifactStore, "content_hash", staticmethod(tracking_hash))
+    monkeypatch.setattr(stages, "parse_tasks", tracking_parse)
+    monkeypatch.setattr(SQLiteStore, "latest_artifact_revisions", tracking_revisions)
+
+    begun = run_stage(repo, "do", task_id="T1", action="begin")
+
+    assert begun.status == "ok"
+    assert all(count == 1 for count in read_counts.values())
+    assert all(count == 1 for count in hash_counts.values())
+    assert parse_count == 1
+    assert revision_query_count == 1
 
 def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
     repo = _prepare_host_repo(tmp_path)
@@ -469,6 +812,22 @@ def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
     begin = run_stage(repo, "do", task_id="T1", action="begin")
 
     assert begin.status == "ok"
+    assert begin.extras["host_internal_flow"]["user_visible"] is False
+    assert begin.extras["host_internal_flow"]["sequence"] == [
+        "run_main_agent",
+        "seal_changes",
+        "run_reviewer_agent",
+        "record_review",
+        "complete_attempt",
+    ]
+    assert begin.extras["host_internal_flow"]["after_reviewer_agent"] == {
+        "internal_action": "record-review",
+        "before_complete_attempt": True,
+    }
+    assert begin.extras["host_internal_flow"]["after_main_agent"]["command_args"] == {
+        "action": "seal-changes",
+        "attempt_id": begin.extras["attempt_id"],
+    }
     index_after = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, check=True, capture_output=True, text=True).stdout
     assert index_after == index_before
 
@@ -483,7 +842,7 @@ def test_claude_code_begin_captures_working_tree_content_snapshot(tmp_path):
     assert "?? untracked.txt" in status_summary["git_status_short"]
 
 
-def test_claude_code_review_context_writes_attempt_changes(tmp_path):
+def test_claude_code_seal_changes_writes_attempt_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     before_begin = repo / "before-begin.txt"
     before_begin.write_text("pre-existing\n", encoding="utf-8")
@@ -496,25 +855,37 @@ def test_claude_code_review_context_writes_attempt_changes(tmp_path):
     (repo / "tracked-after.txt").write_text("after\n", encoding="utf-8")
     (repo / "untracked-after.txt").write_text("new\n", encoding="utf-8")
 
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
 
-    assert review.status == "ok"
-    assert review.extras["review_scope"] == "attempt_scoped"
-    assert review.extras["review_context_revision"] == 1
-    assert "git diff --no-ext-diff --no-textconv" in review.extras["review_diff_command"]
+    assert sealed.status == "ok"
+    assert sealed.extras["review_scope"] == "attempt_scoped"
+    assert sealed.extras["seal_revision"] == 1
+    assert "git diff --no-ext-diff --no-textconv" in sealed.extras["sealed_diff_command"]
+    assert sealed.extras["reviewer_handoff"] == {
+        "user_visible": False,
+        "agent": "code-reviewer",
+        "review_scope": "attempt_scoped",
+        "seal_revision": sealed.extras["seal_revision"],
+        "sealed_changes_ref": sealed.extras["sealed_changes_ref"],
+        "sealed_diff_command": sealed.extras["sealed_diff_command"],
+        "do_not_review_full_worktree": True,
+    }
 
     store = SQLiteStore(repo)
     attempt = store.attempt(int(begin.extras["attempt_id"]))
     assert attempt is not None
-    assert attempt["latest_review_tree"] == review.extras["review_tree"]
-    assert attempt["latest_review_context_revision"] == 1
+    assert attempt["latest_sealed_tree"] == sealed.extras["sealed_tree"]
+    assert attempt["latest_seal_revision"] == 1
     assert attempt["latest_review_status"] == "pending"
-    assert attempt["latest_changes_ref"] == review.extras["changes_ref"]
+    assert attempt["latest_sealed_changes_ref"] == sealed.extras["sealed_changes_ref"]
 
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
     changes_ref = next(ref for ref in refs if ref["kind"] == "attempt_changes")
     changes = json.loads(repo.joinpath(changes_ref["path"]).read_text(encoding="utf-8"))
     paths = {item["path"] for item in changes["files"]}
+    assert changes["version"] == 2
+    assert changes["seal_revision"] == 1
+    assert changes["diff_source"]["sealed_tree"] == sealed.extras["sealed_tree"]
     assert "tracked-after.txt" in paths
     assert "untracked-after.txt" in paths
     assert "before-begin.txt" not in paths
@@ -523,19 +894,26 @@ def test_claude_code_review_context_writes_attempt_changes(tmp_path):
     assert changes["review"]["patch_persisted"] is False
     assert not list((repo / ".loom" / "runs" / "master").glob("*-attempt-diff.patch"))
 
-    second = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
-    assert second.extras["review_context_revision"] == 2
+    second = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    assert second.extras["seal_revision"] == 1
+    assert second.extras["seal_reused"] is True
     assert len([ref for ref in store.runtime_refs(int(begin.extras["attempt_id"])) if ref["kind"] == "attempt_changes"]) == 1
 
 
-def test_claude_code_build_implemented_requires_review_context(tmp_path):
+def test_claude_code_build_implemented_requires_sealed_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
 
     completed = run_stage(repo, "do", action="complete", attempt_id=str(begin.extras["attempt_id"]), status="implemented")
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_missing"]
+    assert completed.errors == ["sealed_changes_missing"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
     attempt = SQLiteStore(repo).attempt(int(begin.extras["attempt_id"]))
     assert attempt is not None
     assert attempt["status"] == "running"
@@ -544,7 +922,7 @@ def test_claude_code_build_implemented_requires_review_context(tmp_path):
 def test_claude_code_build_implemented_requires_passed_review(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
 
     completed = run_stage(
         repo,
@@ -553,18 +931,51 @@ def test_claude_code_build_implemented_requires_passed_review(tmp_path):
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="changes_requested",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
     )
 
+    assert completed.status == "blocked"
+    assert completed.errors == ["review_not_recorded"]
+
+
+def test_claude_code_build_implemented_rejects_recorded_changes_requested_review(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    recorded = run_stage(
+        repo,
+        "do",
+        action="record-review",
+        attempt_id=str(begin.extras["attempt_id"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
+        status="changes_requested",
+        review_summary="The implementation must address the blocking finding.",
+    )
+    assert recorded.status == "ok"
+    completed = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+    )
     assert completed.status == "blocked"
     assert completed.errors == ["review_not_passed"]
-
-
-def test_claude_code_build_implemented_rejects_stale_review_context(tmp_path):
+def test_claude_code_build_implemented_rejects_stale_sealed_changes(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    review = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
     (repo / "after-review.txt").write_text("changed\n", encoding="utf-8")
+    recorded = run_stage(
+        repo,
+        "do",
+        action="record-review",
+        attempt_id=str(begin.extras["attempt_id"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
+        status="pass",
+        review_summary="No blocking findings in the host-provided attempt-scoped diff.",
+    )
+    assert recorded.status == "ok"
 
     completed = run_stage(
         repo,
@@ -573,18 +984,26 @@ def test_claude_code_build_implemented_rejects_stale_review_context(tmp_path):
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="pass",
-        review_context_revision=str(review.extras["review_context_revision"]),
+        seal_revision=str(sealed.extras["seal_revision"]),
     )
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_stale"]
+    assert completed.errors == ["sealed_changes_stale"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
 
 
-def test_claude_code_build_implemented_rejects_review_revision_mismatch(tmp_path):
+def test_claude_code_build_implemented_rejects_seal_revision_mismatch(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     begin = run_stage(repo, "do", task_id="T1", action="begin")
-    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
-    run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+    run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    (repo / "revision-two.txt").write_text("changed\n", encoding="utf-8")
+    resealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    assert resealed.extras["seal_revision"] == 2
 
     completed = run_stage(
         repo,
@@ -593,14 +1012,44 @@ def test_claude_code_build_implemented_rejects_review_revision_mismatch(tmp_path
         attempt_id=str(begin.extras["attempt_id"]),
         status="implemented",
         review_status="pass",
-        review_context_revision="1",
+        seal_revision="1",
     )
 
     assert completed.status == "blocked"
-    assert completed.errors == ["review_context_revision_mismatch"]
+    assert completed.errors == ["seal_revision_mismatch"]
+    assert completed.extras["host_recovery"] == {
+        "user_visible": False,
+        "internal_action": "seal_changes",
+        "command_args": {"action": "seal-changes", "attempt_id": begin.extras["attempt_id"]},
+        "rerun_reviewer": True,
+    }
 
 
-def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
+def test_claude_code_rejects_legacy_seal_action_and_complete_argument(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    begin = run_stage(repo, "do", task_id="T1", action="begin")
+
+    legacy_action = run_stage(repo, "do", action="review-context", attempt_id=str(begin.extras["attempt_id"]))
+
+    assert legacy_action.status == "failed"
+    assert legacy_action.errors == ["legacy_do_action_not_supported"]
+
+    sealed = run_stage(repo, "do", action="seal-changes", attempt_id=str(begin.extras["attempt_id"]))
+    legacy_argument = run_stage(
+        repo,
+        "do",
+        action="complete",
+        attempt_id=str(begin.extras["attempt_id"]),
+        status="implemented",
+        review_status="pass",
+        review_context_revision=str(sealed.extras["seal_revision"]),
+    )
+
+    assert legacy_argument.status == "failed"
+    assert legacy_argument.errors == ["legacy_complete_argument_not_supported"]
+
+
+def test_claude_code_host_verify_completion_does_not_use_summary_as_evidence(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     build_begin = run_stage(repo, "do", task_id="T1", action="begin")
@@ -616,17 +1065,11 @@ def test_claude_code_host_verify_completion_uses_summary_as_evidence(tmp_path):
         summary="claimed verification",
     )
 
-    assert completed.status == "ok"
-    store = SQLiteStore(repo)
-    attempt = store.attempt(int(verify_begin.extras["attempt_id"]))
+    assert completed.status == "blocked"
+    assert completed.errors == ["missing_verification_evidence"]
+    attempt = SQLiteStore(repo).attempt(int(verify_begin.extras["attempt_id"]))
     assert attempt is not None
-    assert attempt["status"] == "verified"
-    refs = store.runtime_refs(int(verify_begin.extras["attempt_id"]))
-    summary_ref = next(ref for ref in refs if ref["kind"] == "verification_summary")
-    assert repo.joinpath(summary_ref["path"]).read_text(encoding="utf-8") == "claimed verification"
-    verification = store.verifications_for_attempt(int(verify_begin.extras["attempt_id"]))[0]
-    assert verification["status"] == "passed"
-    assert verification["summary_ref"] == summary_ref["path"]
+    assert attempt["status"] == "running"
 
 
 def test_claude_code_host_verify_completion_without_explicit_summary_still_blocks(tmp_path):
@@ -805,7 +1248,7 @@ def test_claude_code_host_runtime_rejects_wrong_lane_success_status(tmp_path):
     assert verify_wrong.errors == ["invalid_completion_status"]
 
 
-def test_claude_code_host_runtime_rejects_duplicate_complete(tmp_path):
+def test_claude_code_host_runtime_duplicate_complete_is_idempotent(tmp_path):
     repo = _prepare_host_repo(tmp_path)
 
     begin = run_stage(repo, "do", task_id="T1", action="begin")
@@ -813,9 +1256,18 @@ def test_claude_code_host_runtime_rejects_duplicate_complete(tmp_path):
     first = _complete_build_with_passed_review(repo, attempt_id)
     assert first.status == "ok"
 
+    store = SQLiteStore(repo)
+    attempt = store.attempt(int(attempt_id))
+    assert attempt is not None
+    assert attempt["completion_candidate_ref"]
+    candidate_content = repo.joinpath(attempt["completion_candidate_ref"]).read_text(encoding="utf-8")
+    candidate_hash = hashlib.sha256(candidate_content.encode("utf-8")).hexdigest()
+    assert candidate_hash == attempt["completion_candidate_hash"] == attempt["completion_token"]
+    assert json.loads(candidate_content)["status"] == "implemented"
+
     duplicate = run_stage(repo, "do", action="complete", attempt_id=attempt_id, status="implemented")
-    assert duplicate.status == "failed"
-    assert duplicate.errors == ["attempt_not_running"]
+    assert duplicate.status == "ok"
+    assert duplicate.extras["idempotent"] is True
 
 
 def test_claude_code_host_runtime_blocked_completion_creates_blocking_finding(tmp_path):
@@ -828,19 +1280,23 @@ def test_claude_code_host_runtime_blocked_completion_creates_blocking_finding(tm
 
     next_do = run_stage(repo, "do", task_id="T1")
     assert next_do.status == "blocked"
-    assert next_do.findings[0]["kind"] == "execution_blocked"
+    assert next_do.findings == []
 
     other_task = run_stage(repo, "do", task_id="T2", action="begin")
     assert other_task.status == "blocked"
     assert other_task.recommended_next == "/loom-do T1"
+    assert other_task.errors == ["task_prerequisite_incomplete"]
+
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    findings = store.findings(int(session["id"]))
+    assert any(finding["status"] == "open" for finding in findings if finding["kind"] == "execution_blocked")
 
     retry = run_stage(repo, "do", task_id="T1", action="begin")
     assert retry.status == "ok"
     assert retry.extras["attempt_no"] == 2
 
-    store = SQLiteStore(repo)
-    session = store.branch_session("master")
-    assert session is not None
     findings = store.findings(int(session["id"]))
     assert all(finding["status"] != "open" for finding in findings if finding["kind"] == "execution_blocked")
 
@@ -899,7 +1355,7 @@ def test_claude_code_host_runtime_can_begin_new_attempt_after_running_task_drift
     second_attempt = store.attempt(int(second_begin.extras["attempt_id"]))
     assert first_attempt is not None
     assert second_attempt is not None
-    assert first_attempt["status"] == "running"
+    assert first_attempt["status"] == "superseded"
     assert second_attempt["status"] == "running"
 
 
@@ -923,7 +1379,7 @@ def test_claude_code_host_removed_running_task_does_not_block_other_task_begin(t
     store = SQLiteStore(repo)
     first_attempt = store.attempt(int(first_begin.extras["attempt_id"]))
     assert first_attempt is not None
-    assert first_attempt["status"] == "running"
+    assert first_attempt["status"] == "superseded"
 
 
 def test_claude_code_host_runtime_does_not_persist_legacy_evidence(tmp_path):
@@ -957,7 +1413,7 @@ def test_claude_code_host_runtime_skips_empty_evidence_files(tmp_path):
 
     store = SQLiteStore(repo)
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
-    assert refs == []
+    assert [ref["kind"] for ref in refs] == ["task_packet"]
 
 def test_claude_code_host_runtime_writes_explicit_non_empty_logs(tmp_path, monkeypatch):
     repo = _prepare_host_repo(tmp_path)
@@ -987,7 +1443,7 @@ def test_claude_code_host_runtime_writes_explicit_non_empty_logs(tmp_path, monke
         if ref["kind"] in {"stdout", "stderr"}:
             assert repo.joinpath(ref["path"]).read_text(encoding="utf-8") == f"explicit {ref['kind']}"
 
-def test_ship_records_evidence_integrity_gap_for_drifted_runtime_ref(tmp_path):
+def test_ship_derives_evidence_integrity_gap_and_recovers_after_ref_is_restored(tmp_path):
     repo = init_repo(tmp_path)
     write_project_config(repo, test_command="python --version")
 
@@ -1003,20 +1459,30 @@ def test_ship_records_evidence_integrity_gap_for_drifted_runtime_ref(tmp_path):
     attempts = store.attempts(int(session["id"]))
     verify_attempt = next(attempt for attempt in attempts if attempt["task_id"] == "T2")
     ref = next(ref for ref in store.runtime_refs(int(verify_attempt["id"])) if ref["kind"] == "stdout")
-    repo.joinpath(ref["path"]).write_text("drifted", encoding="utf-8")
+    ref_path = repo.joinpath(ref["path"])
+    original = ref_path.read_text(encoding="utf-8")
+    ref_path.write_text("drifted", encoding="utf-8")
 
-    ship = run_stage(repo, "ship")
+    blocked = run_stage(repo, "ship")
 
-    assert ship.status == "blocked"
-    session = store.branch_session("master")
-    assert session is not None
+    assert blocked.status == "blocked"
+    assert blocked.recommended_next is None
     findings = store.findings(int(session["id"]))
-    assert findings[-1]["kind"] == "evidence_integrity_gap"
+    assert not [finding for finding in findings if finding["kind"] == "evidence_integrity_gap"]
     release = repo.joinpath("specs", "master", "release.md").read_text(encoding="utf-8")
-    assert "### 4.1 Not Verified / Readiness Blockers" in release
     assert "runtime ref hash mismatch" in release
-    assert "## 6.1 Attempt Changes / Runtime Evidence" in release
+    assert "## 7. Evidence References" in release
     assert ref["path"] in release
+
+    ref_path.write_text(original, encoding="utf-8")
+    recovered = run_stage(repo, "ship")
+    assert recovered.status == "ok"
+    assert recovered.extras["release_status"] == "ready"
+    assert not [
+        finding
+        for finding in store.findings(int(session["id"]))
+        if finding["kind"] == "evidence_integrity_gap" and finding["status"] == "open"
+    ]
 
 
 def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_rewriting_old_attempt(tmp_path):
@@ -1029,7 +1495,7 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_r
 
     tasks_path = repo / "specs" / "master" / "tasks.md"
     tasks_path.write_text(
-        tasks_path.read_text(encoding="utf-8").replace("  - Complexity: small\n", "  - Complexity: small\n  - Revision: 2\n", 1),
+        tasks_path.read_text(encoding="utf-8").replace("  - Revision: 1\n", "  - Revision: 2\n", 1),
         encoding="utf-8",
     )
 
@@ -1045,7 +1511,7 @@ def test_claude_code_host_runtime_redoes_task_after_fingerprint_change_without_r
     session = store.branch_session("master")
     assert session is not None
     t1_attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
-    assert [attempt["status"] for attempt in t1_attempts] == ["implemented", "implemented"]
+    assert [attempt["status"] for attempt in t1_attempts] == ["superseded", "implemented"]
 
 
 def test_tasks_registration_recommends_ship_when_revisions_unchanged_and_tasks_completed(tmp_path):
@@ -1061,6 +1527,7 @@ def test_tasks_registration_recommends_ship_when_revisions_unchanged_and_tasks_c
         attempt_id=str(t2_begin.extras["attempt_id"]),
         status="verified",
         summary="verified",
+        verification_summary='{"status":"verified"}',
     ).status == "ok"
 
     tasks_path = repo / "specs" / "master" / "tasks.md"
@@ -1101,3 +1568,195 @@ def test_artifact_drift_finding_resolves_after_artifact_registration(tmp_path):
     findings = store.findings(int(session["id"]))
     drift = next(finding for finding in findings if finding["kind"] == "artifact_drift")
     assert drift["status"] == "resolved"
+
+
+def test_host_artifact_handoff_uses_configured_artifact_root(tmp_path):
+    repo = init_repo(tmp_path)
+    write_project_config(repo, runtime="claude-code")
+    config_path = repo / ".loom" / "project.yml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("root: specs", "root: design-artifacts"),
+        encoding="utf-8",
+    )
+
+    handoff = run_stage(repo, "spec")
+
+    _assert_host_artifact_handoff(
+        handoff,
+        "spec",
+        "design-artifacts/master/spec.md",
+        "spec-analyzer",
+        "spec-reviewer",
+    )
+    artifact_path = repo / handoff.extras["artifact_path"]
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Spec\n\n## Requirement\nCustom root\n", encoding="utf-8")
+
+    registered = run_stage(repo, "spec", artifact_file=handoff.extras["artifact_path"])
+
+    assert registered.status == "ok"
+    assert registered.artifact_paths == ["design-artifacts/master/spec.md"]
+
+
+def test_tasks_continuation_routes_to_plan_without_findings_or_attempts_and_auto_clears(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    session_id = int(session["id"])
+    with store.connect() as conn:
+        revisions_before = conn.execute(
+            "SELECT COUNT(*) FROM artifact_revisions WHERE branch_session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+
+    routed = run_stage(
+        repo,
+        "tasks",
+        action="route",
+        target_stage="plan",
+        reason="carrier identity evidence changes the selected retry mechanism",
+    )
+
+    assert routed.status == "ok"
+    assert routed.recommended_next == "/loom-plan"
+    assert routed.extras == {
+        "continuation_source_stage": "tasks",
+        "continuation_stage": "plan",
+        "continuation_reason": "carrier identity evidence changes the selected retry mechanism",
+    }
+    session = store.branch_session("master")
+    assert session is not None
+    assert session["continuation_source_stage"] == "tasks"
+    assert session["continuation_stage"] == "plan"
+    assert session["continuation_reason"] == "carrier identity evidence changes the selected retry mechanism"
+    assert session["recommended_next"] == "/loom-plan"
+    assert store.findings(session_id) == []
+    assert store.attempts(session_id) == []
+    with store.connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM artifact_revisions WHERE branch_session_id = ?",
+            (session_id,),
+        ).fetchone()[0] == revisions_before
+
+    for command in ("do", "ship"):
+        redirected = run_stage(repo, command, action="begin", task_id="T1")
+        assert redirected.status == "noop"
+        assert redirected.recommended_next == "/loom-plan"
+        assert redirected.extras["continuation_stage"] == "plan"
+    assert store.attempts(session_id) == []
+
+    handoff = run_stage(repo, "plan")
+    _assert_host_artifact_handoff(
+        handoff,
+        "plan",
+        "specs/master/plan.md",
+        "plan-architect",
+        "plan-reviewer",
+    )
+    plan_path = repo / handoff.extras["artifact_path"]
+    plan_path.write_text(plan_path.read_text(encoding="utf-8") + "\nRecovered carrier design.\n", encoding="utf-8")
+
+    registered = run_stage(repo, "plan", artifact_file=handoff.extras["artifact_path"])
+
+    assert registered.status == "ok"
+    assert registered.recommended_next == "/loom-tasks"
+    session = store.branch_session("master")
+    assert session is not None
+    assert session["continuation_source_stage"] is None
+    assert session["continuation_stage"] is None
+    assert session["continuation_reason"] is None
+
+
+def test_invalid_continuation_route_does_not_change_persisted_recommendation(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    store = SQLiteStore(repo)
+    before = store.branch_session("master")
+    assert before is not None
+
+    invalid_edge = run_stage(
+        repo,
+        "plan",
+        action="route",
+        target_stage="tasks",
+        reason="forward routing is not allowed",
+    )
+    missing_reason = run_stage(repo, "tasks", action="route", target_stage="plan")
+    mixed_registration = run_stage(
+        repo,
+        "tasks",
+        action="route",
+        target_stage="plan",
+        reason="cannot register and route together",
+        artifact_file="specs/master/tasks.md",
+    )
+
+    for response in (invalid_edge, missing_reason, mixed_registration):
+        assert response.status == "failed"
+        assert response.errors == ["invalid_continuation_route"]
+    after = store.branch_session("master")
+    assert after is not None
+    assert after["continuation_source_stage"] is None
+    assert after["continuation_stage"] is None
+    assert after["continuation_reason"] is None
+    assert after["recommended_next"] == before["recommended_next"]
+
+
+def test_malformed_tasks_are_not_synced_registered_or_executed(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    session_id = int(session["id"])
+    active_tasks_hash = session["active_tasks_hash"]
+    latest_revision = store.latest_artifact_revision(session_id, "tasks")
+    snapshots_before = store.task_snapshots(session_id)
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace("  - Lane: build", "  - Lane: review", 1),
+        encoding="utf-8",
+    )
+
+    begun = run_stage(repo, "do", action="begin", task_id="T1")
+    registered = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
+
+    for response in (begun, registered):
+        assert response.status == "failed"
+        assert response.recommended_next == "/loom-tasks"
+        assert response.errors == ["invalid_task_lane:T1:review"]
+    session = store.branch_session("master")
+    assert session is not None
+    assert session["active_tasks_hash"] == active_tasks_hash
+    assert store.latest_artifact_revision(session_id, "tasks") == latest_revision
+    assert store.task_snapshots(session_id) == snapshots_before
+    assert store.attempts(session_id) == []
+
+
+def test_continuation_route_accepts_only_declared_same_or_upstream_edges(tmp_path):
+    for index, (source, target) in enumerate((
+        ("spec", "spec"),
+        ("plan", "spec"),
+        ("plan", "plan"),
+        ("tasks", "plan"),
+        ("tasks", "tasks"),
+    )):
+        repo = tmp_path / f"route-{index}"
+        repo.mkdir()
+        init_repo(repo)
+        write_project_config(repo, runtime="claude-code")
+        _register_host_artifacts(repo)
+
+        response = run_stage(
+            repo,
+            source,
+            action="route",
+            target_stage=target,
+            reason=f"continue {source} at {target}",
+        )
+
+        assert response.status == "ok"
+        assert response.recommended_next == f"/loom-{target}"
+        session = SQLiteStore(repo).branch_session("master")
+        assert session is not None
+        assert session["continuation_source_stage"] == source
+        assert session["continuation_stage"] == target

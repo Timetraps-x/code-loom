@@ -7,7 +7,9 @@ class LlmClient(Protocol):
     def draft_spec(self, requirement: str, existing_spec: str | None = None, language: str = "en") -> str:
         ...
 
-    def draft_plan(self, spec: str, constraints: str | None = None, language: str = "en") -> str:
+    def draft_plan(
+        self, spec: str, constraints: str | None = None, language: str = "en", spec_hash: str | None = None
+    ) -> str:
         ...
 
     def draft_tasks(self, spec: str, plan: str, preference: str | None = None, language: str = "en") -> str:

@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 11
 
 SCHEMA = [
     """
@@ -15,6 +15,11 @@ SCHEMA = [
         active_ship_hash TEXT,
         recommended_next TEXT,
         recommended_task_id TEXT,
+        continuation_source_stage TEXT,
+        continuation_stage TEXT,
+        continuation_reason TEXT,
+        continuation_attempt_id INTEGER,
+        continuation_task_id TEXT,
         updated_at TEXT NOT NULL,
         UNIQUE(repo_path, branch_name)
     )
@@ -29,6 +34,7 @@ SCHEMA = [
         based_on_spec_hash TEXT,
         based_on_plan_hash TEXT,
         based_on_tasks_hash TEXT,
+        based_on_execution_hash TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(branch_session_id) REFERENCES branch_sessions(id)
     )
@@ -41,6 +47,9 @@ SCHEMA = [
         task_fingerprint TEXT NOT NULL,
         tasks_hash TEXT NOT NULL,
         title TEXT,
+        task_packet_hash TEXT,
+        task_packet_ref TEXT,
+        task_packet_version TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(branch_session_id) REFERENCES branch_sessions(id),
         UNIQUE(branch_session_id, task_id, tasks_hash)
@@ -61,10 +70,19 @@ SCHEMA = [
         start_head TEXT,
         snapshot_semantics TEXT,
         start_status_json TEXT,
-        latest_review_tree TEXT,
-        latest_review_context_revision INTEGER NOT NULL DEFAULT 0,
+        latest_sealed_tree TEXT,
+        latest_seal_revision INTEGER NOT NULL DEFAULT 0,
         latest_review_status TEXT,
-        latest_changes_ref TEXT,
+        latest_sealed_changes_ref TEXT,
+        task_packet_hash TEXT,
+        task_packet_ref TEXT,
+        task_packet_version TEXT,
+        input_attempts_json TEXT,
+        completion_token TEXT,
+        completion_status TEXT,
+        completion_summary TEXT,
+        completion_candidate_ref TEXT,
+        completion_candidate_hash TEXT,
         status TEXT NOT NULL,
         summary TEXT,
         created_at TEXT NOT NULL,
@@ -111,6 +129,21 @@ SCHEMA = [
         content_hash TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(attempt_id) REFERENCES attempts(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS review_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_id INTEGER NOT NULL,
+        seal_revision INTEGER NOT NULL,
+        sealed_tree TEXT NOT NULL,
+        status TEXT NOT NULL,
+        review_scope TEXT NOT NULL,
+        summary_ref TEXT NOT NULL,
+        summary_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(attempt_id) REFERENCES attempts(id),
+        UNIQUE(attempt_id, seal_revision)
     )
     """,
 ]

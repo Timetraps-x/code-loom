@@ -28,6 +28,8 @@ class SQLiteStore:
             for statement in SCHEMA:
                 conn.execute(statement)
             self._migrate_branch_sessions(conn)
+            self._migrate_artifact_revisions(conn)
+            self._migrate_task_snapshots(conn)
             self._migrate_attempts(conn)
             self._migrate_runtime_refs(conn)
             self._migrate_verifications(conn)
@@ -57,14 +59,64 @@ class SQLiteStore:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(branch_sessions)").fetchall()}
         if "recommended_task_id" not in columns:
             conn.execute("ALTER TABLE branch_sessions ADD COLUMN recommended_task_id TEXT")
+        for column in (
+            "continuation_source_stage",
+            "continuation_stage",
+            "continuation_reason",
+            "continuation_attempt_id",
+            "continuation_task_id",
+        ):
+            if column not in columns:
+                column_type = "INTEGER" if column == "continuation_attempt_id" else "TEXT"
+                conn.execute(f"ALTER TABLE branch_sessions ADD COLUMN {column} {column_type}")
+
+    def _migrate_artifact_revisions(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(artifact_revisions)").fetchall()}
+        if columns and "based_on_execution_hash" not in columns:
+            conn.execute("ALTER TABLE artifact_revisions ADD COLUMN based_on_execution_hash TEXT")
+
+
+    def _migrate_task_snapshots(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_snapshots)").fetchall()}
+        for column in ("task_packet_hash", "task_packet_ref", "task_packet_version"):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE task_snapshots ADD COLUMN {column} TEXT")
+
 
     def _migrate_attempts(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
-        for column in ("start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_tree", "latest_review_status", "latest_changes_ref"):
+        for column in ("start_tree", "start_head", "snapshot_semantics", "start_status_json", "latest_review_status", "latest_sealed_tree", "latest_sealed_changes_ref"):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
-        if columns and "latest_review_context_revision" not in columns:
-            conn.execute("ALTER TABLE attempts ADD COLUMN latest_review_context_revision INTEGER NOT NULL DEFAULT 0")
+        if columns and "latest_seal_revision" not in columns:
+            conn.execute("ALTER TABLE attempts ADD COLUMN latest_seal_revision INTEGER NOT NULL DEFAULT 0")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+        for column in (
+            "task_packet_hash",
+            "task_packet_ref",
+            "task_packet_version",
+            "input_attempts_json",
+            "completion_token",
+            "completion_status",
+            "completion_summary",
+            "completion_candidate_ref",
+            "completion_candidate_hash",
+        ):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE attempts ADD COLUMN {column} TEXT")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+        if {"latest_review_tree", "latest_review_context_revision", "latest_changes_ref"} <= columns:
+            conn.execute(
+                """
+                UPDATE attempts
+                SET latest_sealed_tree = COALESCE(latest_sealed_tree, latest_review_tree),
+                    latest_seal_revision = CASE
+                        WHEN latest_seal_revision = 0 THEN COALESCE(latest_review_context_revision, 0)
+                        ELSE latest_seal_revision
+                    END,
+                    latest_sealed_changes_ref = COALESCE(latest_sealed_changes_ref, latest_changes_ref)
+                """
+            )
 
     def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
@@ -120,11 +172,14 @@ class SQLiteStore:
         based_on_spec_hash: str | None = None,
         based_on_plan_hash: str | None = None,
         based_on_tasks_hash: str | None = None,
+        based_on_execution_hash: str | None = None,
     ) -> int:
         with self.connect() as conn:
             existing = conn.execute(
                 """
-                SELECT id, based_on_spec_hash, based_on_plan_hash, based_on_tasks_hash FROM artifact_revisions
+                SELECT id, based_on_spec_hash, based_on_plan_hash, based_on_tasks_hash,
+                       based_on_execution_hash
+                FROM artifact_revisions
                 WHERE branch_session_id = ? AND kind = ? AND content_hash = ?
                 ORDER BY id DESC LIMIT 1
                 """,
@@ -134,14 +189,15 @@ class SQLiteStore:
                 existing["based_on_spec_hash"] == based_on_spec_hash
                 and existing["based_on_plan_hash"] == based_on_plan_hash
                 and existing["based_on_tasks_hash"] == based_on_tasks_hash
+                and existing["based_on_execution_hash"] == based_on_execution_hash
             ):
                 return int(existing["id"])
             cursor = conn.execute(
                 """
                 INSERT INTO artifact_revisions
                     (branch_session_id, kind, path, content_hash, based_on_spec_hash,
-                     based_on_plan_hash, based_on_tasks_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     based_on_plan_hash, based_on_tasks_hash, based_on_execution_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -151,6 +207,7 @@ class SQLiteStore:
                     based_on_spec_hash,
                     based_on_plan_hash,
                     based_on_tasks_hash,
+                    based_on_execution_hash,
                     utc_now(),
                 ),
             )
@@ -167,6 +224,18 @@ class SQLiteStore:
                 (session_id, kind),
             ).fetchone()
         return dict(row) if row else None
+
+    def latest_artifact_revisions(self, session_id: int) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM artifact_revisions WHERE branch_session_id = ? ORDER BY kind, id DESC",
+                (session_id,),
+            ).fetchall()
+        for row in rows:
+            revision = dict(row)
+            latest.setdefault(str(revision["kind"]), revision)
+        return latest
 
     def upsert_task_snapshot(
         self,
@@ -186,6 +255,71 @@ class SQLiteStore:
                 (session_id, task_id, task_fingerprint, tasks_hash, title, utc_now()),
             )
 
+    def upsert_task_snapshots(
+        self,
+        session_id: int,
+        snapshots: list[tuple[str, str, str, str, str | None, str | None, str | None]],
+    ) -> None:
+        if not snapshots:
+            return
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO task_snapshots
+                    (branch_session_id, task_id, task_fingerprint, tasks_hash, title,
+                     task_packet_hash, task_packet_ref, task_packet_version, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        task_id,
+                        fingerprint,
+                        tasks_hash,
+                        title,
+                        packet_hash,
+                        packet_ref,
+                        packet_version,
+                        utc_now(),
+                    )
+                    for task_id, fingerprint, tasks_hash, title, packet_hash, packet_ref, packet_version in snapshots
+                ],
+            )
+
+    def latest_attempts_by_task(self, session_id: int) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for attempt in self.attempts(session_id):
+            latest[attempt["task_id"]] = attempt
+        return latest
+
+    def runtime_refs_for_attempts(self, attempt_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        grouped = {attempt_id: [] for attempt_id in attempt_ids}
+        if not attempt_ids:
+            return grouped
+        placeholders = ", ".join("?" for _ in attempt_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM runtime_refs WHERE attempt_id IN ({placeholders}) ORDER BY attempt_id, id",
+                attempt_ids,
+            ).fetchall()
+        for row in rows:
+            grouped[int(row["attempt_id"])].append(dict(row))
+        return grouped
+
+    def verifications_for_attempts(self, attempt_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        grouped = {attempt_id: [] for attempt_id in attempt_ids}
+        if not attempt_ids:
+            return grouped
+        placeholders = ", ".join("?" for _ in attempt_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM verifications WHERE attempt_id IN ({placeholders}) ORDER BY attempt_id, id",
+                attempt_ids,
+            ).fetchall()
+        for row in rows:
+            grouped[int(row["attempt_id"])].append(dict(row))
+        return grouped
+
     def task_snapshots(self, session_id: int, tasks_hash: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM task_snapshots WHERE branch_session_id = ?"
         params: list[Any] = [session_id]
@@ -196,6 +330,12 @@ class SQLiteStore:
         with self.connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
+
+    def task_snapshots_by_task(self, session_id: int, tasks_hash: str) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for snapshot in self.task_snapshots(session_id, tasks_hash):
+            latest.setdefault(str(snapshot["task_id"]), snapshot)
+        return latest
 
     def latest_task_snapshot(self, session_id: int, task_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -231,6 +371,10 @@ class SQLiteStore:
         start_head: str | None = None,
         snapshot_semantics: str | None = None,
         start_status_json: str | None = None,
+        task_packet_hash: str | None = None,
+        task_packet_ref: str | None = None,
+        task_packet_version: str | None = None,
+        input_attempts_json: str | None = None,
     ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
@@ -238,8 +382,9 @@ class SQLiteStore:
                 INSERT INTO attempts
                     (branch_session_id, task_id, attempt_no, runtime, based_on_spec_hash,
                      based_on_plan_hash, based_on_tasks_hash, task_fingerprint, start_tree,
-                     start_head, snapshot_semantics, start_status_json, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
+                     start_head, snapshot_semantics, start_status_json, task_packet_hash,
+                     task_packet_ref, task_packet_version, input_attempts_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
                 """,
                 (
                     session_id,
@@ -254,10 +399,120 @@ class SQLiteStore:
                     start_head,
                     snapshot_semantics,
                     start_status_json,
+                    task_packet_hash,
+                    task_packet_ref,
+                    task_packet_version,
+                    input_attempts_json,
                     utc_now(),
                 ),
             )
             return int(cursor.lastrowid)
+
+    def active_attempt(self, session_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM attempts
+                WHERE branch_session_id = ? AND status IN ('running', 'completing')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def start_or_resume_attempt(
+        self,
+        session_id: int,
+        task_id: str,
+        runtime: str,
+        spec_hash: str | None,
+        plan_hash: str | None,
+        tasks_hash: str | None,
+        task_fingerprint: str,
+        current_task_fingerprints: dict[str, str],
+        current_task_inputs: dict[str, str],
+        start_tree: str | None,
+        start_head: str | None,
+        snapshot_semantics: str | None,
+        start_status_json: str | None,
+        task_packet_hash: str,
+        task_packet_version: str,
+        input_attempts_json: str,
+    ) -> tuple[dict[str, Any], bool]:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            active = conn.execute(
+                """
+                SELECT * FROM attempts
+                WHERE branch_session_id = ? AND status IN ('running', 'completing')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                active_task_id = str(active["task_id"])
+                active_fingerprint = current_task_fingerprints.get(active_task_id)
+                active_expected_inputs = current_task_inputs.get(active_task_id)
+                inputs_match = (
+                    active["input_attempts_json"] is None
+                    or active["input_attempts_json"] == active_expected_inputs
+                )
+                if active_fingerprint == active["task_fingerprint"] and inputs_match:
+                    conn.commit()
+                    return dict(active), False
+                conn.execute(
+                    "UPDATE attempts SET status = 'superseded', summary = ?, updated_at = ? WHERE id = ?",
+                    ("superseded after task execution identity or inputs changed", utc_now(), active["id"]),
+                )
+                conn.execute(
+                    "UPDATE findings SET status = 'superseded' WHERE attempt_id = ? AND status = 'open'",
+                    (active["id"],),
+                )
+
+            row = conn.execute(
+                "SELECT MAX(attempt_no) AS attempt_no FROM attempts WHERE branch_session_id = ? AND task_id = ?",
+                (session_id, task_id),
+            ).fetchone()
+            attempt_no = int(row["attempt_no"] or 0) + 1
+            cursor = conn.execute(
+                """
+                INSERT INTO attempts
+                    (branch_session_id, task_id, attempt_no, runtime, based_on_spec_hash,
+                     based_on_plan_hash, based_on_tasks_hash, task_fingerprint, start_tree,
+                     start_head, snapshot_semantics, start_status_json, task_packet_hash,
+                     task_packet_version, input_attempts_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
+                """,
+                (
+                    session_id,
+                    task_id,
+                    attempt_no,
+                    runtime,
+                    spec_hash,
+                    plan_hash,
+                    tasks_hash,
+                    task_fingerprint,
+                    start_tree,
+                    start_head,
+                    snapshot_semantics,
+                    start_status_json,
+                    task_packet_hash,
+                    task_packet_version,
+                    input_attempts_json,
+                    utc_now(),
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            created = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+            conn.commit()
+        return dict(created), True
+
+    def attach_task_packet(self, attempt_id: int, packet_ref: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE attempts SET task_packet_ref = ?, updated_at = ? WHERE id = ?",
+                (packet_ref, utc_now(), attempt_id),
+            )
 
     def update_attempt(self, attempt_id: int, status: str, summary: str | None = None) -> None:
         with self.connect() as conn:
@@ -266,22 +521,188 @@ class SQLiteStore:
                 (status, summary, utc_now(), attempt_id),
             )
 
-    def record_review_context(self, attempt_id: int, review_tree: str, changes_ref: str) -> int:
+    def complete_attempt_if_running(self, attempt_id: int, status: str, summary: str | None = None) -> bool:
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT latest_review_context_revision FROM attempts WHERE id = ?",
-                (attempt_id,),
-            ).fetchone()
-            revision = int(row["latest_review_context_revision"] or 0) + 1
+            cursor = conn.execute(
+                "UPDATE attempts SET status = ?, summary = ?, updated_at = ? WHERE id = ? AND status = 'running'",
+                (status, summary, utc_now(), attempt_id),
+            )
+        return cursor.rowcount == 1
+
+    def claim_attempt_completion(
+        self,
+        attempt_id: int,
+        token: str,
+        final_status: str,
+        summary: str,
+        candidate_ref: str,
+        candidate_hash: str,
+    ) -> str:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+            if row is None:
+                conn.rollback()
+                return "missing"
+            if candidate_hash != token:
+                conn.rollback()
+                return "conflict"
+            if row["status"] == "running":
+                conn.execute(
+                    """
+                    UPDATE attempts
+                    SET status = 'completing', completion_token = ?, completion_status = ?,
+                        completion_summary = ?, completion_candidate_ref = ?,
+                        completion_candidate_hash = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (token, final_status, summary, candidate_ref, candidate_hash, utc_now(), attempt_id),
+                )
+                conn.commit()
+                return "claimed"
+            if row["status"] == "completing":
+                if row["completion_token"] != token or candidate_hash != token:
+                    conn.commit()
+                    return "conflict"
+                if row["completion_candidate_hash"] is None:
+                    conn.execute(
+                        "UPDATE attempts SET completion_candidate_ref = ?, completion_candidate_hash = ?, updated_at = ? WHERE id = ?",
+                        (candidate_ref, candidate_hash, utc_now(), attempt_id),
+                    )
+                    conn.commit()
+                    return "resume"
+                result = (
+                    "resume"
+                    if row["completion_candidate_ref"] == candidate_ref
+                    and row["completion_candidate_hash"] == candidate_hash
+                    else "conflict"
+                )
+                conn.commit()
+                return result
+            result = (
+                "completed"
+                if row["status"] == final_status and (row["completion_token"] is None or row["completion_token"] == token)
+                else "conflict"
+            )
+            conn.commit()
+            return result
+
+    def finalize_attempt_completion(
+        self,
+        attempt_id: int,
+        token: str,
+        final_status: str,
+        summary: str,
+        runtime_refs: list[tuple[str, str, str]],
+        verification: tuple[str, str, int | None, str | None] | None,
+        finding: tuple[int, str, str, str, str | None] | None,
+    ) -> bool:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status, completion_token FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+            if row is None or row["status"] != "completing" or row["completion_token"] != token:
+                conn.rollback()
+                return False
+            for kind, path, content_hash in runtime_refs:
+                conn.execute("DELETE FROM runtime_refs WHERE attempt_id = ? AND kind = ?", (attempt_id, kind))
+                conn.execute(
+                    "INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (attempt_id, kind, path, content_hash, utc_now()),
+                )
+            if verification is not None:
+                command, status, exit_code, summary_ref = verification
+                conn.execute("DELETE FROM verifications WHERE attempt_id = ? AND command = ?", (attempt_id, command))
+                conn.execute(
+                    """
+                    INSERT INTO verifications
+                        (attempt_id, command, status, exit_code, stdout_ref, stderr_ref, summary_ref, created_at)
+                    VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)
+                    """,
+                    (attempt_id, command, status, exit_code, summary_ref, utc_now()),
+                )
+            if finding is not None:
+                session_id, kind, severity, message, suggested_next = finding
+                conn.execute(
+                    """
+                    INSERT INTO findings
+                        (branch_session_id, attempt_id, kind, severity, status, message, suggested_next, created_at)
+                    VALUES (?, ?, ?, ?, 'open', ?, ?, ?)
+                    """,
+                    (session_id, attempt_id, kind, severity, message, suggested_next, utc_now()),
+                )
             conn.execute(
                 """
                 UPDATE attempts
-                SET latest_review_tree = ?, latest_review_context_revision = ?, latest_review_status = ?, latest_changes_ref = ?, updated_at = ?
+                SET status = ?, summary = ?, completion_status = ?, completion_summary = ?, updated_at = ?
+                WHERE id = ? AND status = 'completing' AND completion_token = ?
+                """,
+                (final_status, summary, final_status, summary, utc_now(), attempt_id, token),
+            )
+            conn.commit()
+            return True
+
+    def record_sealed_changes(self, attempt_id: int, sealed_tree: str) -> tuple[int, bool]:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                raise ValueError(f"attempt not found: {attempt_id}")
+            revision = int(row["latest_seal_revision"] or 0)
+            if revision > 0 and row["latest_sealed_tree"] == sealed_tree:
+                conn.commit()
+                return revision, False
+            revision += 1
+            conn.execute(
+                """
+                UPDATE attempts
+                SET latest_sealed_tree = ?, latest_seal_revision = ?, latest_review_status = 'pending',
+                    latest_sealed_changes_ref = NULL, updated_at = ?
                 WHERE id = ?
                 """,
-                (review_tree, revision, "pending", changes_ref, utc_now(), attempt_id),
+                (sealed_tree, revision, utc_now(), attempt_id),
             )
-            return revision
+            conn.commit()
+            return revision, True
+
+    def attach_sealed_changes(
+        self,
+        attempt_id: int,
+        seal_revision: int,
+        sealed_tree: str,
+        changes_ref: str,
+        changes_hash: str,
+    ) -> bool:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                row is None
+                or int(row["latest_seal_revision"] or 0) != seal_revision
+                or row["latest_sealed_tree"] != sealed_tree
+            ):
+                conn.rollback()
+                return False
+            conn.execute(
+                "DELETE FROM runtime_refs WHERE attempt_id = ? AND kind = 'attempt_changes'",
+                (attempt_id,),
+            )
+            conn.execute(
+                "INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at) VALUES (?, 'attempt_changes', ?, ?, ?)",
+                (attempt_id, changes_ref, changes_hash, utc_now()),
+            )
+            conn.execute(
+                "UPDATE attempts SET latest_sealed_changes_ref = ?, updated_at = ? WHERE id = ?",
+                (changes_ref, utc_now(), attempt_id),
+            )
+            conn.commit()
+            return True
 
     def update_review_status(self, attempt_id: int, status: str) -> None:
         with self.connect() as conn:
@@ -289,6 +710,54 @@ class SQLiteStore:
                 "UPDATE attempts SET latest_review_status = ?, updated_at = ? WHERE id = ?",
                 (status, utc_now(), attempt_id),
             )
+
+    def record_review(
+        self,
+        attempt_id: int,
+        seal_revision: int,
+        sealed_tree: str,
+        status: str,
+        summary_ref: str,
+        summary_hash: str,
+    ) -> int:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ?",
+                (attempt_id, seal_revision),
+            ).fetchone()
+            if existing is not None:
+                if existing["sealed_tree"] == sealed_tree and existing["status"] == status:
+                    conn.commit()
+                    return int(existing["id"])
+                conn.rollback()
+                raise ValueError("review_already_recorded")
+            conn.execute(
+                "INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at) VALUES (?, 'review_summary', ?, ?, ?)",
+                (attempt_id, summary_ref, summary_hash, utc_now()),
+            )
+            cursor = conn.execute(
+                """
+                INSERT INTO review_records
+                    (attempt_id, seal_revision, sealed_tree, status, review_scope, summary_ref, summary_hash, created_at)
+                VALUES (?, ?, ?, ?, 'attempt_scoped', ?, ?, ?)
+                """,
+                (attempt_id, seal_revision, sealed_tree, status, summary_ref, summary_hash, utc_now()),
+            )
+            conn.execute(
+                "UPDATE attempts SET latest_review_status = ?, updated_at = ? WHERE id = ?",
+                (status, utc_now(), attempt_id),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
+
+    def review_for_seal(self, attempt_id: int, seal_revision: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ?",
+                (attempt_id, seal_revision),
+            ).fetchone()
+        return dict(row) if row else None
 
     def supersede_attempt(self, attempt_id: int, summary: str | None = None) -> None:
         self.update_attempt(attempt_id, "superseded", summary)

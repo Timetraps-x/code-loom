@@ -53,7 +53,7 @@ def test_changed_task_definition_creates_new_attempt_without_rewriting_old_attem
     session = store.branch_session("master")
     assert session is not None
     attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
-    assert [attempt["status"] for attempt in attempts] == ["implemented", "implemented"]
+    assert [attempt["status"] for attempt in attempts] == ["superseded", "implemented"]
 
 
 def test_task_notes_change_does_not_create_new_attempt(tmp_path):
@@ -78,6 +78,32 @@ def test_task_notes_change_does_not_create_new_attempt(tmp_path):
     t1_attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
     assert [attempt["status"] for attempt in t1_attempts] == ["implemented"]
 
+
+def test_non_semantic_inline_context_change_does_not_create_new_attempt(tmp_path):
+    repo = init_repo(tmp_path)
+    run_stage(repo, "spec")
+    run_stage(repo, "plan")
+    run_stage(repo, "tasks")
+    run_stage(repo, "do", task_id="T1")
+
+    tasks_path = repo / "specs" / "master" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace(
+            "Mock requires project evidence to identify a real implementation landing point.",
+            "Mock needs project evidence before selecting a real implementation landing point.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    response = run_stage(repo, "do", task_id="T1")
+
+    assert response.status == "ok"
+    assert response.recommended_next == "/loom-do T2"
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    t1_attempts = [attempt for attempt in store.attempts(int(session["id"])) if attempt["task_id"] == "T1"]
+    assert [attempt["status"] for attempt in t1_attempts] == ["implemented"]
 
 def test_task_notes_revision_metadata_does_not_create_new_attempt(tmp_path):
     repo = init_repo(tmp_path)

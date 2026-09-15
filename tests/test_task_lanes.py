@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from codeloom.kernel.artifacts import parse_tasks
+from codeloom.kernel.artifacts import TaskPacket, parse_tasks, task_identity_errors, task_relation_errors
 from codeloom.kernel.attempts import attempt_status
 
 
@@ -50,6 +50,34 @@ def test_parse_tasks_raw_includes_task_notes():
     assert "Notes: preserve boundary context" in tasks[0].raw
 
 
+def test_parse_tasks_raw_includes_inline_task_context_but_not_later_reader_notes():
+    task = parse_tasks(
+        """# Tasks
+
+- [ ] T1: Establish shared state
+  - Lane: build
+  - Complexity: non-trivial
+  - Revision: 1
+  - Context: `C:fulfillment` through `D:fulfillment-state`.
+  - Implementation direction: services/fulfillment.py:transition; critical path before T2.
+  - Boundaries: preserve the idempotency invariant; stop after the state transition exists.
+  - Handoff: Covered by T2 for repeated submission and downstream consumption.
+
+## Optional Reader Notes
+
+- Context: this must not be passed to Do.
+"""
+    )[0]
+
+    assert "C:fulfillment" in task.raw
+    assert "D:fulfillment-state" in task.raw
+    assert "critical path before T2" in task.raw
+    assert "Optional Reader Notes" not in task.raw
+    assert task.lane == "build"
+    assert task.complexity == "non-trivial"
+    assert task.revision == "1"
+
+
 def test_parse_tasks_reads_complexity_and_defaults_to_small():
     tasks = parse_tasks(
         """# Tasks
@@ -72,6 +100,34 @@ def test_parse_tasks_reads_complexity_and_defaults_to_small():
         ("T2", "non-trivial"),
         ("T3", "small"),
     ]
+
+
+def test_task_packet_round_trips_canonical_execution_context():
+    task = parse_tasks(
+        """# Tasks
+
+- [ ] T1: Build behavior
+  - Lane: build
+  - Complexity: non-trivial
+  - Revision: 3
+  - Context: `C:orders` through `D:order-state`.
+  - Boundaries: Preserve idempotency.
+  - Suggested validation: Run the focused order test.
+"""
+    )[0]
+    packet = TaskPacket.from_task(task)
+    restored = TaskPacket.from_canonical_json(packet.canonical_json())
+
+    assert restored == packet
+    assert packet.payload()["fields"] == {
+        "boundaries": ["Preserve idempotency."],
+        "complexity": ["non-trivial"],
+        "context": ["`C:orders` through `D:order-state`."],
+        "lane": ["build"],
+        "revision": ["3"],
+        "suggested validation": ["Run the focused order test."],
+    }
+    assert packet.content_hash
 
 
 def test_parse_tasks_revision_changes_fingerprint_but_notes_do_not():
@@ -109,6 +165,7 @@ def test_parse_tasks_revision_changes_fingerprint_but_notes_do_not():
     assert original.revision == "1"
     assert notes_changed.fingerprint == original.fingerprint
     assert revision_changed.fingerprint != original.fingerprint
+    assert TaskPacket.from_task(notes_changed).content_hash != TaskPacket.from_task(original).content_hash
 
 
 def test_parse_tasks_missing_revision_matches_explicit_revision_one():
@@ -375,3 +432,176 @@ def test_attempt_status_uses_lane_success_semantics():
     assert attempt_status("verify", True, False) == "verified"
     assert attempt_status("build", False, False) == "failed"
     assert attempt_status("verify", True, True) == "failed"
+
+
+def test_task_identity_diagnostics_preserve_tolerant_missing_metadata():
+    content = """# Tasks
+
+## build
+
+- [ ] T1: Build behavior
+
+- [ ] T2: Verify behavior
+"""
+
+    assert task_identity_errors(content) == []
+    assert [(task.task_id, task.lane, task.complexity, task.revision) for task in parse_tasks(content)] == [
+        ("T1", "build", "small", "1"),
+        ("T2", "build", "small", "1"),
+    ]
+
+
+def test_task_identity_diagnostics_reject_duplicate_ids_and_invalid_explicit_values():
+    content = """# Tasks
+
+- [ ] T1: Build behavior
+  - Lane: review
+  - Complexity: M
+  - Revision:
+
+- [ ] T1: Duplicate behavior
+  - Lane: build later
+  - Complexity: non-trivial later
+  - Revision: two words
+"""
+
+    assert set(task_identity_errors(content)) == {
+        "duplicate_task_id:T1",
+        "invalid_task_lane:T1:review",
+        "invalid_task_complexity:T1:M",
+        "invalid_task_revision:T1:<empty>",
+        "invalid_task_lane:T1:build later",
+        "invalid_task_complexity:T1:non-trivial later",
+        "invalid_task_revision:T1:two words",
+    }
+
+
+def test_task_identity_diagnostics_reject_conflicting_immediate_metadata():
+    content = """# Tasks
+
+- [ ] T1: Build behavior
+  - Lane: build
+  - Lane: verify
+  - Complexity: small
+  - Complexity: non-trivial
+  - Revision: 1
+  - Revision: v2
+"""
+
+    assert task_identity_errors(content) == [
+        "conflicting_task_lane:T1",
+        "conflicting_task_complexity:T1",
+        "conflicting_task_revision:T1",
+    ]
+
+
+def test_task_identity_diagnostics_allow_identical_metadata_and_revision_tokens():
+    content = """# Tasks
+
+- [ ] T1: Build behavior
+  - Lane: BUILD
+  - Lane: build
+  - Complexity: small
+  - Complexity: SMALL
+  - Revision: v2
+  - Revision: v2
+
+- [ ] T2: Verify behavior
+  - Lane: verify
+  - Complexity: non-trivial
+  - Revision: 01
+"""
+
+    assert task_identity_errors(content) == []
+
+
+def test_parse_tasks_captures_serial_and_verification_relations():
+    tasks = parse_tasks(
+        """# Tasks
+
+- [ ] T1: Build state
+  - Lane: build
+  - Complexity: small
+  - Revision: 1
+  - Depends on: None
+  - Covered by: T3
+
+- [ ] T2: Build independent report
+  - Lane: build
+  - Complexity: small
+  - Revision: 1
+  - Depends on: None
+  - Covered by: T3
+
+- [ ] T3: Verify results
+  - Lane: verify
+  - Complexity: small
+  - Revision: 1
+  - Depends on: T1, T2
+  - Validates: T1, T2
+"""
+    )
+
+    assert tasks[0].depends_on == ()
+    assert tasks[0].covered_by == ("T3",)
+    assert tasks[1].depends_on == ()
+    assert tasks[2].depends_on == ("T1", "T2")
+    assert tasks[2].validates == ("T1", "T2")
+    assert all(task.relations_declared for task in tasks)
+    packet = TaskPacket.from_task(tasks[2])
+    assert TaskPacket.from_canonical_json(packet.canonical_json()) == packet
+    assert packet.payload()["validates"] == ["T1", "T2"]
+
+
+def test_task_relation_diagnostics_reject_invalid_graph_references():
+    content = """# Tasks
+
+- [ ] T1: Build state
+  - Lane: build
+  - Depends on: T2
+  - Covered by: T2
+
+- [ ] T2: Verify state
+  - Lane: verify
+  - Depends on: T1, T1
+  - Validates: T9
+"""
+
+    errors = set(task_relation_errors(content))
+    assert "unordered_task_relation:T1:depends_on:T2" in errors
+    assert "duplicate_task_relation:T2:depends_on:T1" in errors
+    assert "dangling_task_relation:T2:validates:T9" in errors
+    assert "task_coverage_mismatch:T1:T2" in errors
+
+
+def test_task_relation_diagnostics_allow_relationless_legacy_tasks():
+    content = """# Tasks
+
+- [ ] T1: Build state
+  - Lane: build
+
+- [ ] T2: Verify state
+  - Lane: verify
+"""
+
+    assert task_relation_errors(content) == []
+
+
+def test_task_relation_diagnostics_reject_duplicate_and_conflicting_fields():
+    content = """# Tasks
+
+- [ ] T1: Build state
+  - Lane: build
+  - Depends on: None
+  - Depends on: T2
+  - Covered by: T2
+
+- [ ] T2: Verify state
+  - Lane: verify
+  - Depends on: T1
+  - Validates: T1
+"""
+
+    errors = set(task_relation_errors(content))
+    assert "duplicate_task_relation_field:T1:depends_on" in errors
+    assert "conflicting_task_relation:T1:depends_on" in errors

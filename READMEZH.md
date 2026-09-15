@@ -20,7 +20,7 @@ ship   release.md 交付结论
 - `plan.md` 描述设计事实、约束、风险和验证策略，不负责 do 阶段任务拆分。
 - `tasks.md` 将 plan 中的设计事实投影为可执行的 build / verify 任务边界，并用 Verification Coverage Map 覆盖当前需求和关键回归面。
 - `do` 只执行当前 task，并把推进当前 Loom 生命周期所需的最小辅助 evidence 记录到 SQLite / `.loom/runs/`，包括 attempt changes、runtime logs 和可用的验证摘要。
-- `ship` 生成 `release.md`，汇总完成情况、证据和剩余风险。
+- `ship` 在当前全部 Build 和 Verify 任务都已有有效结果后执行，生成 `release.md`，说明交付了什么、证明了什么以及当前是否具备发布条件。
 
 ## 项目布局
 
@@ -36,7 +36,7 @@ ship   release.md 交付结论
 specs/<branch_slug>/        # spec.md / plan.md / tasks.md / release.md
 ```
 
-`.loom/templates/` 是项目模板区，可以按项目直接修改或替换。再次执行 `loom init` 不覆盖已有模板，除非传 `--force`。
+`.loom/templates/` 是项目模板区，可以按项目直接修改或替换。再次执行 `loom init` 不覆盖已有模板，除非传 `--force`。`loom upgrade --claude-code` 只更新受管理的 `.claude/agents/` 与 `.claude/skills/` projection；只有明确需要刷新 bundled project templates 时才使用 `loom init --force`。
 
 `.loom/project.yml`、`.loom/loom.db` 和 `.loom/runs/` 是本地项目配置与运行时状态；`.loom/runs/` 保存推进当前 Loom 生命周期所需的最小辅助 evidence，不是长期审计归档或源码副本；`specs/<branch_slug>/` 是交付类 Markdown artifact。
 
@@ -78,7 +78,7 @@ uv run loom --help
 从 Git tag 安装：
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.4.0
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.5.0
 loom --help
 ```
 
