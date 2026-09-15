@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,12 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         "session": None,
         "artifacts": _artifact_statuses(artifacts),
         "constitution": constitution_status(repo_path, config.constitution_path, config.constitution_hash),
+        "project_profile": {
+            "languages": list(config.languages),
+            "frameworks": list(config.frameworks),
+            "modules": list(config.modules),
+            "commands": dict(config.commands),
+        },
         "open_findings": [],
         "latest_attempts": [],
         "errors": [],
@@ -47,6 +54,15 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         tasks_by_id = {task.task_id: task for task in parse_tasks(tasks_content)}
         result["session"] = _session_summary(session, tasks_by_id)
         session_id = int(session["id"])
+        latest_ship = store.latest_artifact_revision(session_id, "ship")
+        result["artifacts"]["ship"].update({
+            "registered_hash": latest_ship.get("content_hash") if latest_ship else None,
+            "registered_execution_hash": latest_ship.get("based_on_execution_hash") if latest_ship else None,
+            "content_current": bool(
+                latest_ship
+                and latest_ship.get("content_hash") == result["artifacts"]["ship"]["hash"]
+            ),
+        })
         result["open_findings"] = _open_findings(store.findings(session_id))
         result["latest_attempts"] = _latest_attempts(store.attempts(session_id), tasks_by_id)
     except Exception as exc:
@@ -76,6 +92,13 @@ def _session_summary(session: dict[str, Any], tasks_by_id: dict[str, Any]) -> di
         "recommended_next": session.get("recommended_next"),
         "recommended_task_id": recommended_task_id,
         "recommended_task_title": recommended_task.title if recommended_task else None,
+        "continuation": {
+            "source_stage": session.get("continuation_source_stage"),
+            "stage": session.get("continuation_stage"),
+            "reason": session.get("continuation_reason"),
+            "attempt_id": session.get("continuation_attempt_id"),
+            "task_id": session.get("continuation_task_id"),
+        } if session.get("continuation_stage") else None,
         "active_hashes": {
             "spec": session.get("active_spec_hash"),
             "plan": session.get("active_plan_hash"),
@@ -105,6 +128,47 @@ def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any]
     latest: dict[str, dict[str, Any]] = {}
     for attempt in attempts:
         latest[str(attempt["task_id"])] = attempt
+
+    tasks = list((tasks_by_id or {}).values())
+    explicit_relations = any(task.relations_declared for task in tasks)
+    effective: dict[str, dict[str, Any]] = {}
+    projections: dict[str, dict[str, Any]] = {}
+    for index, task in enumerate(tasks):
+        attempt = latest.get(task.task_id)
+        input_ids = (
+            tuple(dict.fromkeys((*task.depends_on, *task.validates)))
+            if explicit_relations
+            else (() if index == 0 else (tasks[index - 1].task_id,))
+        )
+        blocked_by = [task_id for task_id in input_ids if task_id not in effective]
+        recorded_inputs = _json_object((attempt or {}).get("input_attempts_json"))
+        expected_inputs = {task_id: int(effective[task_id]["id"]) for task_id in input_ids if task_id in effective}
+        expected_status = "verified" if task.lane == "verify" else "implemented"
+        inputs_match = (
+            not explicit_relations and (attempt or {}).get("input_attempts_json") is None
+        ) or (len(expected_inputs) == len(input_ids) and recorded_inputs == expected_inputs)
+        is_effective = bool(
+            attempt
+            and attempt.get("task_fingerprint") == task.fingerprint
+            and attempt.get("status") == expected_status
+            and inputs_match
+        )
+        if is_effective:
+            effective[task.task_id] = attempt
+            effective_status = "effective"
+        elif attempt and attempt.get("status") in {"running", "completing"}:
+            effective_status = "active"
+        elif blocked_by:
+            effective_status = "blocked"
+        elif attempt and attempt.get("status") == expected_status:
+            effective_status = "stale"
+        else:
+            effective_status = str((attempt or {}).get("status") or "pending")
+        projections[task.task_id] = {
+            "effective_status": effective_status,
+            "blocked_by": blocked_by,
+        }
+
     return [
         {
             "task_id": attempt.get("task_id"),
@@ -112,8 +176,24 @@ def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any]
             "lane": tasks_by_id.get(str(attempt.get("task_id"))).lane if tasks_by_id and str(attempt.get("task_id")) in tasks_by_id else None,
             "complexity": tasks_by_id.get(str(attempt.get("task_id"))).complexity if tasks_by_id and str(attempt.get("task_id")) in tasks_by_id else None,
             "status": attempt.get("status"),
+            "effective_status": projections.get(task_id, {}).get("effective_status"),
+            "blocked_by": projections.get(task_id, {}).get("blocked_by", []),
+            "input_attempts": _json_object(attempt.get("input_attempts_json")),
+            "completion_status": attempt.get("completion_status"),
+            "completion_candidate_ref": attempt.get("completion_candidate_ref"),
+            "completion_candidate_hash": attempt.get("completion_candidate_hash"),
             "summary": attempt.get("summary"),
             "updated_at": attempt.get("updated_at"),
         }
         for task_id, attempt in sorted(latest.items())
     ]
+
+
+def _json_object(value: object | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}

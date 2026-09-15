@@ -11,3 +11,15 @@ dist/
 spec-kit-src/
 docs/research/
 specs/
+/.codegraph/
+
+# Local research artifacts (not release inputs)
+/.tmp_*
+/.tmp_arxiv/
+/.tmpclaim/
+/.tmpresearch/
+/debate.pdf
+/debate.txt
+/metr.pdf
+/metr.txt
+/story_mapping_reference.png

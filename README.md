@@ -22,7 +22,7 @@ Core principles:
 - `plan.md` describes design facts, constraints, risks, and verification strategy; it does not define do-stage task slicing.
 - `tasks.md` projects plan design facts into executable build / verify task boundaries, plus a verification coverage map for requested behavior and material regression surfaces.
 - `do` executes only the current task and records minimal current-lifecycle auxiliary evidence in SQLite / `.loom/runs/`, including attempt changes, runtime logs, and verification summaries when available.
-- `ship` generates `release.md` with completed work, evidence, and remaining risk.
+- `ship` runs after all current Build and Verify tasks have effective results, then generates `release.md` stating what was delivered, what was proven, and whether the change is ready to release.
 
 ## Project Layout
 
@@ -38,7 +38,7 @@ After initialization, a project contains:
 specs/<branch_slug>/        # spec.md / plan.md / tasks.md / release.md
 ```
 
-`.loom/templates/` is the project template area. Teams may edit or replace these templates directly. Running `loom init` again preserves existing templates unless `--force` is used.
+`.loom/templates/` is the project template area. Teams may edit or replace these templates directly. Running `loom init` again preserves existing templates unless `--force` is used. `loom upgrade --claude-code` updates only the managed `.claude/agents/` and `.claude/skills/` projection; use `loom init --force` when you intentionally want to refresh bundled project templates.
 
 `.loom/project.yml`, `.loom/loom.db`, and `.loom/runs/` are local project configuration and runtime state. `.loom/runs/` stores minimal auxiliary evidence for the current Loom lifecycle, not long-term audit archives or source-code duplicates. `specs/<branch_slug>/` contains deliverable Markdown artifacts.
 
@@ -80,7 +80,7 @@ uv run loom --help
 Install from a Git tag:
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.4.3
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.5.0
 loom --help
 ```
 
