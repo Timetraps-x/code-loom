@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONSTITUTION_PATH = ".loom/constitution.md"
+CONSTITUTION_SEED_MARKER = "CODELOOM_CONSTITUTION_SEED"
 
 
 def register_constitution(cwd: Path, constitution: str = DEFAULT_CONSTITUTION_PATH) -> dict[str, Any]:
@@ -20,20 +21,28 @@ def register_constitution(cwd: Path, constitution: str = DEFAULT_CONSTITUTION_PA
         }
 
     content_hash = _hash_file(path)
+    seeded = _is_seeded(path)
     project_path = repo_path / ".loom" / "project.yml"
     if not project_path.exists():
         return {
             "status": "failed",
             "message": "project is not initialized",
-            "constitution": _status(relative_path, True, content_hash, "", False),
+            "constitution": _status(relative_path, True, content_hash, "", seeded),
             "errors": [f"missing: {project_path}"],
+        }
+    if seeded:
+        return {
+            "status": "failed",
+            "message": "constitution scaffold must be replaced before registration",
+            "constitution": _status(relative_path, True, content_hash, "", True),
+            "errors": ["constitution_not_adopted"],
         }
 
     _update_project_yml(project_path, relative_path.as_posix(), content_hash)
     return {
         "status": "ok",
         "message": "constitution registered",
-        "constitution": _status(relative_path, True, content_hash, content_hash, True),
+        "constitution": _status(relative_path, True, content_hash, content_hash, False),
         "errors": [],
     }
 
@@ -45,17 +54,30 @@ def constitution_status(
 ) -> dict[str, Any]:
     relative_path = _validated_constitution_path(repo_path.resolve(), configured_path or DEFAULT_CONSTITUTION_PATH)
     path = repo_path.resolve() / relative_path
-    current_hash = _hash_file(path) if path.exists() else None
-    return _status(relative_path, path.exists(), current_hash, registered_hash, bool(current_hash and current_hash == registered_hash))
+    exists = path.exists()
+    current_hash = _hash_file(path) if exists else None
+    seeded = _is_seeded(path) if exists else False
+    return _status(relative_path, exists, current_hash, registered_hash, seeded)
 
 
-def _status(relative_path: Path, exists: bool, current_hash: str | None, registered_hash: str, matches_registered: bool) -> dict[str, Any]:
+def _status(
+    relative_path: Path,
+    exists: bool,
+    current_hash: str | None,
+    registered_hash: str,
+    seeded: bool,
+) -> dict[str, Any]:
+    registered = bool(registered_hash)
+    matches_registered = bool(current_hash and registered and current_hash == registered_hash)
     return {
         "path": relative_path.as_posix(),
         "exists": exists,
+        "seeded": seeded,
+        "registered": registered,
         "current_hash": current_hash,
         "registered_hash": registered_hash or "",
         "matches_registered": matches_registered,
+        "usable": bool(exists and not seeded and matches_registered),
     }
 
 
@@ -75,6 +97,13 @@ def _hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+def _is_seeded(path: Path) -> bool:
+    try:
+        return CONSTITUTION_SEED_MARKER in path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
 
 
 def _update_project_yml(project_path: Path, constitution_path: str, constitution_hash: str) -> None:

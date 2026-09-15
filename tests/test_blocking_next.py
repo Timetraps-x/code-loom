@@ -5,7 +5,7 @@ from codeloom.persistence.sqlite import SQLiteStore
 from tests.helpers import init_repo, run_stage
 
 
-def test_blocking_finding_suggested_do_resolves_to_task_next(tmp_path):
+def test_blocking_finding_does_not_freeze_do_branch(tmp_path):
     repo = init_repo(tmp_path)
     run_stage(repo, "spec")
     run_stage(repo, "plan")
@@ -23,6 +23,8 @@ def test_blocking_finding_suggested_do_resolves_to_task_next(tmp_path):
 
     response = run_stage(repo, "do")
 
-    assert response.status == "blocked"
-    assert response.recommended_next == "/loom-do T1"
-    assert response.recommended_task_id == "T1"
+    assert response.status == "ok"
+    assert response.recommended_next == "/loom-do T2"
+    assert response.recommended_task_id == "T2"
+    attempts = [item for item in store.attempts(session_id) if item["task_id"] == task.task_id]
+    assert [item["status"] for item in attempts] == ["superseded", "implemented"]

@@ -2,167 +2,55 @@
 
 based_on_plan_hash: `<plan-hash>`
 
-> Kernel interface:
-> `/loom:do` parses checklist tasks and their immediate metadata as the runtime source of truth.
-> Task format:
->
-> ```markdown
-> - [ ] T1: <task title>
->   - Lane: build | verify
->   - Complexity: trivial | small | non-trivial
->   - Revision: 1
-> ```
->
-> `Revision` changes only when this task's execution boundary, done criteria, verification coverage, lane, or dependency semantics change. Keep it unchanged for wording, formatting, evidence prose, or non-semantic Task Notes updates.
->
-> `Task Notes` are execution context for readers and host agents. Do not rely on `Task Notes` to provide Kernel metadata. If Task List metadata and Task Notes conflict, Task List metadata is authoritative for task interpretation.
+Use this as a flexible delivery guide, not a checklist or field schema. A complete Tasks artifact projects accepted Plan design into an implementation result chain, coherent `build` slices, behavior/risk-oriented `verify` coverage, self-contained task packets, and packet-local Revision decisions. Omit optional labels and reader sections when concise prose is clearer.
 
-## 1. Execution Boundary Overview
+Task execution identity is expressed by `Tn`, title, `Lane`, `Complexity`, and `Revision`. The complete captured task block carries its execution context. Revision protects execution meaning, not Markdown wording.
 
-Describe how design facts from `plan.md` are projected into execution boundaries. Prefer risk boundaries, delivery boundaries, dependency order, and natural verification windows. Do not split mechanically by file, class, function, or technical layer. Do not copy the plan's reasoning process, alternatives discussion, or long background sections; do extract the design facts, constraints, invariants, contracts, risks, and verification requirements needed for do-stage execution.
+## Implementation Path
 
-## 2. Execution Lanes
+Describe only the selected design and the stage-level results that must become true. Explain a shared prerequisite, recommended order, independent track, critical path, integration window, or natural verification window only when it changes execution judgment. List order is the Planner's recommendation, not a runtime dependency graph or runnable gate.
 
-Executable task lanes stay deliberately small. They describe what `/loom:do` should execute, not every kind of thinking that may happen around execution.
+Do not split mechanically by file, class, function, page, API, table, or technical layer. Prefer coherent delivery results, inseparable contracts/state/transaction invariants, failure isolation, local stopping points, rollback boundaries, and natural proof destinations.
 
-| Lane | Purpose | Common Agent |
-|---|---|---|
-| build | Implement or modify deliverables, including code, SQL, configuration, UI, or documentation. | builder |
-| verify | Test, accept, summarize evidence, and review risks; may cover multiple build tasks. | verifier |
+## Task List
 
-Do not create executable `Tn` tasks for lanes other than `build` or `verify`. Missing facts that block safe slicing must be clarified before generating `tasks.md` or returned as blocked. Only non-blocking known constraints, risk notes, and validation notes belong in build/verify task context.
+Create a parseable task only when the accepted Plan already supplies the material result, boundary, current-project landing, protected invariant, and proof direction needed for safe slicing. If one of those decisions is still missing, return the smallest design gap before producing final tasks; never encode undecided design or fact gathering as build/verify work.
 
-## 3. Delivery Map
+Put tasks in recommended execution order. Keep each `Tn` unique and stable across revisions. Each item begins with immediate metadata, then includes only the context required by that task. A Task List item with only metadata is invalid: its block ends before the next task or new top-level section, so a table, delivery map, or later reader note cannot supply missing execution context. A Plan reference provides traceability but cannot be the only source of a material state, transition, concurrency outcome, external-effect guard, stop, or proof obligation. The labels below are examples, not required fields. Simple work may use compact prose; expand only when cross-layer, public-contract, state, permission, transaction, migration, asynchronous, performance, or verification complexity makes the detail material.
 
-| Task | Lane | Complexity | Plan Source | Acceptance Source | Execution Boundary |
-|---|---|---|---|---|---|
-| T1 | build | small | §<plan section> | AC-<id> | <Delivery or risk boundary owned by this task> |
-| T2 | verify | non-trivial | §<plan section> | AC-<id> | <Behavior, risk, or regression surface verified by this task> |
-
-## 4. Verification Coverage Map
-
-This map links build tasks to verification coverage. It is task-planning context, not task metadata. Grouped verification changes verification coverage, maps material impacted regression surfaces, and does so without changing build task granularity; do not merge build tasks merely because they share a verify task.
-
-| Coverage Area | Type | Covered Build Tasks | Verify Tasks | Expected Evidence / Notes |
-|---|---|---|---|---|
-| <Requested behavior or material regression surface> | requested behavior \| regression \| contract \| state/permission/transaction \| performance/query | Tn | Tn | <Evidence needed to verify this coverage area> |
-
-## 5. Execution Order
-
-If there are no dependencies, write `Execute in Task List order`.
-
-| Order | Tasks | Notes |
-|---|---|---|
-| 1 | T1 | <Prerequisite or highest-risk task> |
-| 2 | T2 | <Follow-up verification> |
-
-## 6. Task List
-
-- [ ] T1: <task title, outcome-oriented>
+- [ ] T1: <deliver a bounded implementation result>
   - Lane: build
-  - Complexity: small
+  - Complexity: trivial | small | non-trivial
   - Revision: 1
+  - Depends on: None
+  - Covered by: T2
+  - Context: <accepted result and selected design; result this task establishes>.
+  - Implementation direction: <current responsibility and target landing; material relation to earlier or later work>.
+  - Boundaries: <invariant/contract/risk/out-of-scope guard>; stop when <local completion condition>.
+  - Handoff: Prove <behavior/risk/regression surface> with <expected evidence and limits>.
 
-- [ ] T2: <task title, outcome-oriented>
+- [ ] T2: <prove a behavior, risk boundary, or regression surface>
   - Lane: verify
-  - Complexity: small
+  - Complexity: trivial | small | non-trivial
   - Revision: 1
+  - Depends on: T1
+  - Validates: T1
+  - Context: <accepted result and selected design>; validates <covered build result(s)>.
+  - Boundaries: Observe <required behavior/counterexample/contract/state/permission/transaction/query/performance path>; do not claim <stronger result than the evidence supports>.
+  - Handoff: Record <automated/static/real-flow/experiment/human-needed evidence> and its limitations.
 
-## 7. Task Notes
+One verify task may cover several naturally related build tasks. This does not merge their implementation result, stopping point, failure isolation, or ownership boundary. Avoid vague verify work such as `run tests`, `verify the feature`, or `check everything`. Verification proves behavior established by accepted design; a fact whose answer would change the Plan mechanism or safe slicing returns as the smallest Plan evidence gap rather than becoming a research or verify task. When a material state or invariant is involved, prove its real creation entry and prohibited repeated or terminal re-entry instead of relying only on a pre-seeded intermediate state.
 
-### T1: <task title>
+## Revision Guidance
 
-- Runtime metadata: see `## 6. Task List` for Lane, Complexity, and Revision.
-- From plan: §<section> (reference source sections only; do not copy large plan text; put execution-critical design facts in Boundary / Done / Notes)
-- Acceptance: AC-<id> / N/A
-- Depends on: None / Tn
-- Scope:
-  - `<path-or-module-or-area>`
-- Suggested validation:
-  - `<command-or-manual-check>`
-- Covered by: Tn
+Compare an affected task with its prior ID, title, Lane, Complexity, Revision, complete task block, and relevant attempt baseline.
 
-#### Boundary
+- Keep ID, title, and Revision unchanged for wording, formatting, links, explanatory evidence, and context changes that cannot alter why, what, where, guard, stop, order, or proof.
+- When the delivered result, done boundary, material landing/proof surface, invariant/contract/risk, lane, or implementation-before/after relation changes, preserve the ID, update the title only if needed, and increment only that task's Revision.
+- Revise a verify task only when its covered behavior or proof obligation changes.
+- Give genuinely new logical work a new ID and `Revision: 1`.
+- Preserve unrelated IDs, titles, Revisions, contexts, and attempts; an upstream artifact change does not imply a global bump.
 
-This section describes the execution boundary, not line-by-line implementation steps.
+## Optional Reader Notes
 
-Allowed:
-
-- <Behavior, module, deliverable, or configuration scope this task may handle>
-
-Forbidden:
-
-- <Requirement semantics, public contracts, data model semantics, major UI flows, later task boundaries, or unrelated refactors this task must not change>
-
-#### Done
-
-- <Observable result after completion>
-- <Minimum verification or evidence>
-
-#### Evidence
-
-- <Command output, screenshot, SQL result, diff, explanation, or N/A>
-
-#### Notes
-
-- Context need: <Why this task needs local context beyond the checklist title>
-- Codebase facts to confirm: <Specific existing paths, symbols, contracts, or conventions to inspect before changing code>
-- Quality constraints: <Relevant constitution, stack, performance, safety, or evidence constraints for this task>
-- These notes are execution context for builder, code-reviewer, and verifier. They are not task metadata.
-- <Only design facts, constraints, invariants, contracts, risk notes, verification requirements, or non-blocking implementation hints that affect execution judgment>
-- Do not copy the plan's reasoning process; preserve enough context for builder, code-reviewer, and verifier to execute or review without rereading the full plan.
-- Do not enumerate ordinary local coding choices; builder should judge them from existing code style and the task boundary.
-
----
-
-### T2: <task title>
-
-- Runtime metadata: see `## 6. Task List` for Lane, Complexity, and Revision.
-- From plan: §<section> (reference source sections only; do not copy large plan text; put execution-critical design facts in Boundary / Done / Notes)
-- Acceptance: AC-<id> / N/A
-- Depends on: None / Tn
-- Scope:
-  - `<path-or-module-or-area>`
-- Suggested validation:
-  - `<command-or-manual-check>`
-- Validates: Tn / N/A
-
-#### Boundary
-
-This section describes the execution boundary, not line-by-line implementation steps.
-
-Allowed:
-
-- ...
-
-Forbidden:
-
-- ...
-
-#### Done
-
-- ...
-
-#### Evidence
-
-- ...
-
-#### Notes
-
-- Context need: <Why this task needs local context beyond the checklist title>
-- Codebase facts to confirm: <Specific existing paths, symbols, contracts, or conventions to inspect before verifying>
-- Quality constraints: <Relevant constitution, stack, performance, safety, or evidence constraints for this task>
-- These notes are execution context for builder, code-reviewer, and verifier. They are not task metadata.
-- <Only design facts, constraints, invariants, contracts, risk notes, verification requirements, or non-blocking implementation hints that affect execution judgment>
-
-## 8. Global Notes
-
-- `plan.md` remains the design truth source; `tasks.md` only slices execution. Do not copy plan text, but do extract the design facts, constraints, invariants, contracts, risks, and verification requirements needed for do-stage execution.
-- Checklist tasks and their immediate `Lane` / `Complexity` / `Revision` metadata are the Kernel runtime interface; Task Notes are execution context, not the runtime source of truth.
-- `Complexity` is a lightweight execution hint, not a gate. Use `small` when uncertain.
-- `Revision` is the explicit execution-contract version. Increment it only when the task's execution boundary, done criteria, verification coverage, lane, or dependency semantics change.
-- Executable `Tn` tasks use only the `build` or `verify` lane.
-- Build tasks must describe boundaries, dependencies, stopping points, and verification coverage. Every build task must have a clear `Covered by: Tn` or grouped verify task, but each build task does not need independent full functional acceptance.
-- Verification Coverage Map is agent/human context, not Kernel metadata; it maps the full verify task set to requested behavior and material impacted regression surfaces without changing build task granularity.
-- Verify tasks may cover multiple build tasks by behavior, risk, or regression surface. Verify-only scenarios may have no build task, but each verify task must point to a plan section, acceptance criteria, or expected evidence.
-- If execution reveals that the plan is invalid, return to `/loom:plan` or `/loom:tasks`; if it affects requirement semantics, return to `/loom:spec`. Do not expand scope inside the task.
+Use this section only for navigation or non-critical summaries. A Task List item with only metadata remains invalid even when a later note repeats its ID. Delivery maps, coverage maps, order tables, and later notes cannot be the sole source of task context. If information changes why, what, where, guard, stop, or proof, place it inside the affected task block.

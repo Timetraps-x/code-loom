@@ -1,69 +1,18 @@
 # <Requirement Name> Spec
 
-## 1. Background
+This is a flexible decision projection, not a mandatory checklist or semantic schema. Keep only organization that helps a reader understand the requirement decision. Do not manufacture sections, rows, IDs, goals, users, rules, risks, or questions to complete a form. Prose, lists, tables, or a short narrative are all valid.
 
-Describe the user request, the current problem, and the context that triggered this change.
+A useful artifact normally makes the following judgments legible, in whatever order and shape serves the demand:
 
-## 2. Known Facts, Inferences, and Decisions to Confirm
+- **Current problem and branch commitment** — the evidence-backed reality or failure, and the user or system result this branch must establish. Do not name only a page, API, table, module, feature noun, or smallest CRUD action.
+- **Decision basis** — known facts, supported inferences and their limits, conflicts, and Owner decisions that evidence cannot make. Current code, a page, a local test, or a historical record proves only the local fact it observes.
+- **Relevant operating behavior** — only the trigger, actor, responsibility, fact source, state meaning, work surface, action, result, exception, or external consequence that changes requirement correctness. A business object is not a table; a state meaning is not an enum; a work surface is not a page route; an action is not a button.
+- **Way boundaries** — rules, fact authority, permissions, state/data meanings, scope boundaries, non-goals, and prohibited consequences. When a constraint concerns a side effect, say whether a reachable entry point, scheduled job, retry, automatic progression, write, or external call can still trigger it.
+- **Complex-demand coverage, when useful** — which original promises are current necessary, existing correct coverage, current implementation gaps, evidence gaps, legal continuations, irrelevant, or Owner decisions. Existing coverage names its path, boundary, and evidence. An evidence gap remains unverified. This can be a sentence, list, table, or omitted entirely for a closed small correction.
+- **Proof direction** — who should observe what result after which event; which failure or boundary matters; and what future evidence can establish or refute the result. A page, API 200, compile, screenshot, mock, or isolated test does not by itself prove an unobserved business result.
+- **Open questions, only when material** — a technical-design question may be handed to Plan. An Owner decision that still changes requirement correctness must remain in the host clarification loop rather than being hidden inside a registrable final Spec.
+- **Readable commitment anchors, when useful** — a complex demand may use a prose label, bullet label, table value, or `C:<meaningful-slug>` example to help readers locate a commitment. Anchors are optional navigation aids, not IDs, a schema, or a cross-revision lineage protocol.
 
-### 2.1 Known Facts
+If current code, tests, historical artifacts, and user input conflict, preserve the conflict and its resolution direction; do not promote a source to fact just because it is concrete. Do not turn a possible implementation, defensive default, compatibility behavior, repair semantics, or extra side effect into a requirement without evidence or an accepted decision.
 
-- <Facts from user input, existing documentation, or the current system; write None if empty>
-
-### 2.2 Inferences
-
-- <Context-derived assumptions that do not change requirement semantics; write None if empty>
-
-### 2.3 Owner Decisions to Confirm
-
-- <Questions that affect requirement semantics, acceptance criteria, public contracts, or risk acceptance; write None if empty>
-
-## 3. Goals and Non-Goals
-
-### 3.1 Goals
-
-- <Goal 1>
-
-### 3.2 Non-Goals
-
-- <Explicitly out-of-scope work>
-
-## 4. Users / Actors
-
-- <User or system actor>
-
-## 5. Requirements
-
-| ID | Requirement | Priority |
-|---|---|---|
-| FR-1 | <Functional requirement> | Must |
-
-## 6. Acceptance Criteria
-
-Every AC must describe an observable and verifiable outcome. Do not write only "support", "optimize", "improve", or "complete a capability" without concrete evidence.
-
-### 6.1 Observable Success
-
-- <User-visible or system-visible success behavior>
-
-### 6.2 Observable Failure
-
-- <Expected failure behavior or error exposure; write N/A if not relevant>
-
-### 6.3 Acceptance Table
-
-| ID | Acceptance Criteria | Verification Hint |
-|---|---|---|
-| AC-1 | <Verifiable result> | <Page/API/command/data check> |
-
-## 7. Constraints and Rules
-
-- <Business rule, permission rule, data rule, or technical constraint>
-
-## 8. Risks and Hard Gates
-
-- <Risk that affects design, verification, or delivery>
-
-## 9. Open Questions
-
-- OQ-1: <Question that needs clarification; write None if empty>
+Do not include implementation design, executable tasks, test commands, verification execution, release readiness, runtime/session facts, agent process notes, reviewer discussion, platform feedback, or prompt/eval tuning.

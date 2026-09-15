@@ -7,6 +7,7 @@ from typing import Any
 from codeloom.app.claude_plugin import COMMANDS
 from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
+from codeloom.app.managed_projection import projection_status
 from codeloom.kernel.clients import create_runtime_client
 from codeloom.persistence.migrations import CURRENT_SCHEMA_VERSION
 from codeloom.persistence.sqlite import SQLiteStore
@@ -40,9 +41,11 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
     constitution = constitution_status(repo_path, config.constitution_path, config.constitution_hash)
     if not constitution["exists"]:
         _add_check(checks, "constitution", "warning", f"missing: {constitution['path']}")
-    elif not constitution["registered_hash"]:
+    elif constitution["seeded"]:
+        _add_check(checks, "constitution", "warning", f"seeded/unadopted: {constitution['path']}")
+    elif not constitution["registered"]:
         _add_check(checks, "constitution", "warning", f"unregistered: {constitution['path']}")
-    elif constitution["matches_registered"]:
+    elif constitution["usable"]:
         _add_check(checks, "constitution", "ok", f"registered: {constitution['path']}")
     else:
         _add_check(checks, "constitution", "warning", f"hash mismatch: {constitution['path']}")
@@ -52,6 +55,13 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
         _add_check(checks, "claude skills", "warning", f"missing {len(missing_skills)} skill files")
     else:
         _add_check(checks, "claude skills", "ok", "all loom skills present")
+
+    projection = projection_status(repo_path)
+    projection_issues = [result for result in projection if result.status in {"conflict", "missing", "invalid_manifest"}]
+    if projection_issues:
+        _add_check(checks, "claude projection", "warning", f"{len(projection_issues)} managed resource issues; run loom upgrade --claude-code --dry-run")
+    else:
+        _add_check(checks, "claude projection", "ok", "managed agents and skills match or are not yet managed")
 
     try:
         runtime = create_runtime_client(config.default_runtime)

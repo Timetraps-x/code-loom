@@ -3,101 +3,158 @@ from __future__ import annotations
 import json
 from importlib import resources
 
+from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import init_project, load_project_config
 from codeloom.cli.main import main
 
 
-def test_adopt_registers_constitution_hash(tmp_path, capsys):
+def test_adopt_rejects_seed_scaffold(tmp_path, capsys):
     init_project(tmp_path)
-    constitution_path = tmp_path / ".loom" / "constitution.md"
-    constitution_path.write_text("# Constitution\n\nProject rulebook / quality baseline.\n", encoding="utf-8")
 
     exit_code = main(["adopt", "--cwd", str(tmp_path), "--json"])
-    output = capsys.readouterr().out
-    payload = json.loads(output)
+    payload = json.loads(capsys.readouterr().out)
+    config = load_project_config(tmp_path)
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["errors"] == ["constitution_not_adopted"]
+    assert payload["constitution"]["seeded"] is True
+    assert payload["constitution"]["usable"] is False
+    assert config.constitution_hash == ""
+
+
+def test_adopt_registers_non_seed_constitution_hash(tmp_path, capsys):
+    init_project(tmp_path)
+    constitution_path = tmp_path / ".loom" / "constitution.md"
+    constitution_path.write_text("# Project Constitution\n\n## Ownership\n\n- Services own durable workflow transitions.\n", encoding="utf-8")
+
+    exit_code = main(["adopt", "--cwd", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
     config = load_project_config(tmp_path)
 
     assert exit_code == 0
     assert payload["status"] == "ok"
     assert payload["constitution"]["path"] == ".loom/constitution.md"
+    assert payload["constitution"]["seeded"] is False
     assert payload["constitution"]["matches_registered"] is True
-    assert config.constitution_path == ".loom/constitution.md"
+    assert payload["constitution"]["usable"] is True
     assert config.constitution_hash == payload["constitution"]["current_hash"]
+
+
+def test_adopt_human_output_reports_seed_and_usable_state(tmp_path, capsys):
+    init_project(tmp_path)
+    constitution_path = tmp_path / ".loom" / "constitution.md"
+    constitution_path.write_text("# Project Constitution\n\n- Services own workflow transitions.\n", encoding="utf-8")
+
+    exit_code = main(["adopt", "--cwd", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Seeded: False" in output
+    assert "Usable: True" in output
+
+
+def test_constitution_drift_stays_unusable_until_reregistered(tmp_path, capsys):
+    init_project(tmp_path)
+    constitution_path = tmp_path / ".loom" / "constitution.md"
+    constitution_path.write_text("# Project Constitution\n\n- Initial project rule.\n", encoding="utf-8")
+    assert main(["adopt", "--cwd", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    registered_hash = load_project_config(tmp_path).constitution_hash
+
+    constitution_path.write_text("# Project Constitution\n\n- Revised project rule.\n", encoding="utf-8")
+    init_project(tmp_path)
+    config = load_project_config(tmp_path)
+    status = constitution_status(tmp_path, config.constitution_path, config.constitution_hash)
+
+    assert config.constitution_hash == registered_hash
+    assert status["registered"] is True
+    assert status["matches_registered"] is False
+    assert status["usable"] is False
+
+    assert main(["adopt", "--cwd", str(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["constitution"]["usable"] is True
+    assert payload["constitution"]["registered_hash"] != registered_hash
+
+
+def test_adopt_registers_custom_path_under_loom(tmp_path, capsys):
+    init_project(tmp_path)
+    custom_path = tmp_path / ".loom" / "governance" / "engineering.md"
+    custom_path.parent.mkdir(parents=True)
+    custom_path.write_text("# Engineering Rules\n\n- Domain packages own exported identifiers.\n", encoding="utf-8")
+
+    exit_code = main([
+        "adopt",
+        "--cwd",
+        str(tmp_path),
+        "--constitution",
+        ".loom/governance/engineering.md",
+        "--json",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    config = load_project_config(tmp_path)
+
+    assert exit_code == 0
+    assert payload["constitution"]["path"] == ".loom/governance/engineering.md"
+    assert payload["constitution"]["usable"] is True
+    assert config.constitution_path == ".loom/governance/engineering.md"
 
 
 def test_adopt_requires_initialized_project_and_existing_constitution(tmp_path, capsys):
     exit_code = main(["adopt", "--cwd", str(tmp_path), "--json"])
-    output = capsys.readouterr().out
-    payload = json.loads(output)
+    payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1
     assert payload["status"] == "failed"
     assert payload["errors"]
 
-def test_constitution_template_uses_cross_language_quality_sections():
+
+def test_constitution_template_is_an_unadopted_cross_language_seed():
     content = resources.files("codeloom.templates").joinpath("constitution-template.md").read_text(encoding="utf-8")
 
-    assert "Code Placement and Ownership" in content
-    assert "Business, Data, and State Flow Visibility" in content
-    assert "Abstraction, Reuse, and Naming Thresholds" in content
-    assert "Stack-Local Code Shape" in content
-    assert "Change Risk Boundaries" in content
-    assert "Rule Stability Boundary" in content
-    assert "Do not keep generic template instructions" in content
+    assert "CODELOOM_CONSTITUTION_SEED" in content
+    for heading in (
+        "Code Placement and Ownership",
+        "Business, Data, and State Flow Visibility",
+        "Abstraction, Reuse, and Naming Thresholds",
+        "Stack-Local Code Shape",
+        "Change Risk Boundaries",
+        "Rule Stability Boundary",
+    ):
+        assert heading in content
+    assert "Record only project-specific" in content
     assert "Stack Profiles" not in content
     assert "Project Identity and Quality Baseline" not in content
 
 
-def test_adopt_expert_requires_stack_detection_before_positive_case_loading():
+def test_adopt_expert_separates_promotion_profile_and_suggestions():
     content = resources.files("codeloom.agents").joinpath("adopt-expert.md").read_text(encoding="utf-8")
 
-    assert "Detect the project's real stack" in content
-    assert "Read only matching stack material under `.loom/references/positive-cases/`" in content
-    assert "Positive cases are interpretation aids" in content
-    assert "short guidance only for stacks actually present" in content
+    for expected in (
+        "# Promotion Judgment",
+        "**promote**",
+        "**target-only**",
+        "**non-propagation**",
+        "**material conflict**",
+        "# Project Profile",
+        "Keep commands out of the constitution",
+        "# CLAUDE.md Suggestions",
+        "Never mix these suggestions into the constitution candidate",
+        "# Optional Bounded Delegation",
+        "Delegation is optional",
+        "If no delegation channel is available, continue with bounded direct investigation",
+        "Write in English by default",
+        "downstream prompt surface",
+    ):
+        assert expected in content
+
+    assert "SQLite" not in content
+    assert "register_constitution" not in content
+    assert "workflow state" not in content
+    assert "temporary Claude Code child agent before writing" not in content
 
 
-def test_adopt_expert_claude_md_suggestions_are_update_claude_only():
-    content = resources.files("codeloom.agents").joinpath("adopt-expert.md").read_text(encoding="utf-8")
-
-    default_section = content.split("Explicit `update-claude` mode:", 1)[0]
-    assert "Read project `CLAUDE.md` files when present" in default_section
-    assert "Do not emit `CLAUDE.md` rewrite suggestions" in default_section
-    assert "Do not modify any `CLAUDE.md`" in default_section
-    assert "Only when the user argument clearly requests `update-claude`" in content
-    assert "Default mode: return clean `.loom/constitution.md` content only" in content
-
-
-def test_adopt_expert_defaults_constitution_to_english_for_llm_consumption():
-    content = resources.files("codeloom.agents").joinpath("adopt-expert.md").read_text(encoding="utf-8")
-
-    assert "Write `.loom/constitution.md` in English by default" in content
-    assert "downstream prompt surface" in content
-    assert "Use another language only when the user explicitly requests it" in content
-
-
-def test_adopt_expert_rejects_constitution_scaffold_prose():
-    content = resources.files("codeloom.agents").joinpath("adopt-expert.md").read_text(encoding="utf-8")
-
-    assert "Every final bullet must name a concrete project owner" in content
-    assert "Do not write self-describing scaffold prose" in content
-    assert "Omit any section that has no project-specific content" in content
-
-
-def test_adopt_expert_has_evidence_classification_and_user_question_gate():
-    content = resources.files("codeloom.agents").joinpath("adopt-expert.md").read_text(encoding="utf-8")
-
-    assert "Evidence classification and promotion rules" in content
-    assert "untracked_or_in_progress_code" in content
-    assert "target_state_design" in content
-    assert "Only `stable_existing_convention`, `stable_positive_shape`, `repository_rule`, and confirmed user decisions" in content
-    assert "Required evidence delegation when classification is unsafe" in content
-    assert "Use `codebase-scout` for code facts" in content
-    assert "repository/document scout" in content
-    assert "Conflict and user-decision gate" in content
-    assert "promotion` conflict" in content
-    assert "authority` conflict" in content
-    assert "legacy` conflict" in content
 def test_positive_case_resources_are_packaged():
     positive_cases = resources.files("codeloom.quality_cases.positive")
 
@@ -116,16 +173,20 @@ def test_java_spring_positive_case_carries_stack_specific_verification_guidance(
     assert "broad Spring `ApplicationContext` test" in content
     assert "mark runtime/page/API behavior as not end-to-end verified" in content
 
+
 def test_java_spring_positive_case_carries_defensive_code_thresholds():
     content = resources.files("codeloom.quality_cases.positive").joinpath("java-spring-mybatis.md").read_text(encoding="utf-8")
 
-    assert "Defensive Code Threshold" in content
-    assert "defensive null checks" in content
-    assert "nullable database columns" in content
-    assert "legacy dirty data" in content
-    assert "fallback normalization" in content
-    assert "compatibility shims" in content
-    assert "impossible states" in content
-    assert "Context" in content
-    assert "Assembler" in content
-    assert "Wrapper" in content
+    for expected in (
+        "Defensive Code Threshold",
+        "defensive null checks",
+        "nullable database columns",
+        "legacy dirty data",
+        "fallback normalization",
+        "compatibility shims",
+        "impossible states",
+        "Context",
+        "Assembler",
+        "Wrapper",
+    ):
+        assert expected in content

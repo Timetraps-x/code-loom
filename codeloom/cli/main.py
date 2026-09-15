@@ -14,7 +14,8 @@ from codeloom.app.request import KernelRequest
 from codeloom.app.response import KernelResponse
 from codeloom.app.stages import StageRunner
 from codeloom.app.status import get_status
-from codeloom.cli.render import emit_data, emit_kernel_response, render_adopt, render_doctor, render_init, render_status
+from codeloom.app.managed_projection import upgrade_claude_projection
+from codeloom.cli.render import emit_data, emit_kernel_response, render_adopt, render_doctor, render_init, render_status, render_upgrade
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -31,6 +32,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     init_parser.add_argument("--opencode", action="store_true", help="select OpenCode integration when supported")
     _add_output_flags(init_parser)
 
+    upgrade_parser = subparsers.add_parser("upgrade")
+    upgrade_parser.add_argument("--cwd", default=".")
+    upgrade_parser.add_argument("--claude-code", action="store_true", help="upgrade managed Claude Code agents and skills")
+    upgrade_parser.add_argument("--group", choices=["all", "agents", "skills"], default="all")
+    upgrade_parser.add_argument("--dry-run", action="store_true")
+    upgrade_parser.add_argument("--resolve", action="append", default=[])
+    _add_output_flags(upgrade_parser)
     adopt_parser = subparsers.add_parser("adopt")
     adopt_parser.add_argument("--cwd", default=".")
     adopt_parser.add_argument("--constitution", default=".loom/constitution.md")
@@ -68,6 +76,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         emit_data(payload, args.json_output, render_init)
         return 0
+    if args.subcommand == "upgrade":
+        if not args.claude_code:
+            parser.error("upgrade currently requires --claude-code")
+        try:
+            payload = upgrade_claude_projection(
+                Path(args.cwd),
+                group=args.group,
+                dry_run=args.dry_run,
+                resolve_bundle_paths=set(args.resolve),
+            )
+        except ValueError as exc:
+            payload = {"status": "failed", "dry_run": args.dry_run, "resources": [], "errors": [str(exc)]}
+        emit_data(payload, args.json_output, render_upgrade)
+        return 0 if payload["status"] == "ok" else 1
     if args.subcommand == "adopt":
         try:
             payload = register_constitution(Path(args.cwd), args.constitution)
