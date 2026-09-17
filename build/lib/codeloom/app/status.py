@@ -6,7 +6,8 @@ from typing import Any
 
 from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
-from codeloom.kernel.artifacts import branch_slug, parse_tasks
+from codeloom.kernel.artifacts import branch_slug, parse_tasks, task_identity_errors, task_relation_errors
+from codeloom.kernel.drift import derive_artifact_states
 from codeloom.persistence.sqlite import SQLiteStore
 from codeloom.stores.markdown import MarkdownArtifactStore
 
@@ -50,21 +51,40 @@ def get_status(cwd: Path, branch_name: str) -> dict[str, Any]:
         session = store.branch_session(branch_name)
         if session is None:
             return result
-        tasks_content = artifacts.read("tasks") or ""
-        tasks_by_id = {task.task_id: task for task in parse_tasks(tasks_content)}
-        result["session"] = _session_summary(session, tasks_by_id)
         session_id = int(session["id"])
-        latest_ship = store.latest_artifact_revision(session_id, "ship")
-        result["artifacts"]["ship"].update({
-            "registered_hash": latest_ship.get("content_hash") if latest_ship else None,
-            "registered_execution_hash": latest_ship.get("based_on_execution_hash") if latest_ship else None,
-            "content_current": bool(
-                latest_ship
-                and latest_ship.get("content_hash") == result["artifacts"]["ship"]["hash"]
-            ),
-        })
+        revisions = store.latest_artifact_revisions(session_id)
+        tasks_by_id: dict[str, Any] = {}
+        task_error = None
+        tasks_content = artifacts.read("tasks")
+        if tasks_content is not None:
+            contract_errors = task_identity_errors(tasks_content) + task_relation_errors(tasks_content)
+            if contract_errors:
+                task_error = ", ".join(contract_errors)
+            else:
+                tasks = parse_tasks(tasks_content)
+                if tasks:
+                    tasks_by_id = {task.task_id: task for task in tasks}
+                else:
+                    task_error = "tasks.md contains no parseable tasks"
+        states = derive_artifact_states(
+            {kind: result["artifacts"][kind]["hash"] for kind in ARTIFACT_KINDS},
+            revisions,
+            task_error=task_error,
+        )
+        for kind, state in states.items():
+            result["artifacts"][kind].update(state)
+            result["artifacts"][kind]["content_current"] = bool(
+                state["registered_hash"] and state["registered_hash"] == state["disk_hash"]
+            )
+        latest_ship = revisions.get("ship")
+        result["artifacts"]["ship"]["registered_execution_hash"] = (
+            latest_ship.get("based_on_execution_hash") if latest_ship else None
+        )
+        result["session"] = _session_summary(session, tasks_by_id)
         result["open_findings"] = _open_findings(store.findings(session_id))
-        result["latest_attempts"] = _latest_attempts(store.attempts(session_id), tasks_by_id)
+        result["latest_attempts"] = _latest_attempts(store.attempts(session_id), tasks_by_id, branch_name)
+        if task_error:
+            result["errors"].append(task_error)
     except Exception as exc:
         result["status"] = "failed"
         result["errors"].append(f"{type(exc).__name__}: {exc}")
@@ -124,7 +144,7 @@ def _open_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any] | None = None, branch_name: str = "") -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for attempt in attempts:
         latest[str(attempt["task_id"])] = attempt
@@ -182,6 +202,17 @@ def _latest_attempts(attempts: list[dict[str, Any]], tasks_by_id: dict[str, Any]
             "completion_status": attempt.get("completion_status"),
             "completion_candidate_ref": attempt.get("completion_candidate_ref"),
             "completion_candidate_hash": attempt.get("completion_candidate_hash"),
+            "completion_candidate_available": attempt.get("completion_candidate_json") is not None or bool(attempt.get("completion_candidate_ref")),
+            "recovery_command": (
+                f"/loom-do {attempt.get('task_id')}"
+                if attempt.get("status") in {"running", "completing"}
+                else None
+            ),
+            "unlock_command": (
+                f"loom stage do --branch {branch_name} --arg action=unlock --arg attempt_id={attempt.get('id')}"
+                if attempt.get("status") in {"running", "completing"}
+                else None
+            ),
             "summary": attempt.get("summary"),
             "updated_at": attempt.get("updated_at"),
         }

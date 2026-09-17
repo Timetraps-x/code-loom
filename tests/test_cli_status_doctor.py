@@ -5,6 +5,7 @@ import json
 import pytest
 
 from codeloom.app.init_project import load_project_config
+from codeloom.app.managed_projection import MANIFEST_PATH
 from codeloom.cli.main import main
 
 
@@ -18,12 +19,12 @@ def test_cli_version_flags(capsys):
     with pytest.raises(SystemExit) as long_exit:
         main(["--version"])
     assert long_exit.value.code == 0
-    assert capsys.readouterr().out.strip() == "codeloom 0.5.1"
+    assert capsys.readouterr().out.strip() == "codeloom 0.5.2"
 
     with pytest.raises(SystemExit) as short_exit:
         main(["-v"])
     assert short_exit.value.code == 0
-    assert capsys.readouterr().out.strip() == "codeloom 0.5.1"
+    assert capsys.readouterr().out.strip() == "codeloom 0.5.2"
 
 def test_cli_defaults_to_human_output(tmp_path, capsys):
     exit_code = main(["init", "--cwd", str(tmp_path)])
@@ -72,7 +73,8 @@ def test_cli_stage_spec_without_artifact_file_reports_host_handoff(tmp_path, cap
     assert payload["errors"] == []
     assert payload["recommended_next"] == "/loom-spec"
     assert payload["extras"]["handoff"] == "author_artifact"
-    assert payload["extras"]["main_agent"] == "spec-analyzer"
+    assert payload["extras"]["main_role"] == "spec-analyzer"
+    assert "main_agent" not in payload["extras"]
     assert payload["extras"]["artifact_path"] == "specs/master/spec.md"
     assert payload["extras"]["register_command"] == "loom stage spec --branch master --arg artifact_file=specs/master/spec.md"
 
@@ -209,3 +211,35 @@ def test_doctor_json_is_available(tmp_path, capsys):
     assert payload["status"] == "warning"
     assert payload["checks"]
     assert any(check["name"] == "constitution" for check in payload["checks"])
+
+
+def test_doctor_reports_retired_owner_agent_migration_conflict(tmp_path, capsys):
+    main(["init", "--cwd", str(tmp_path)])
+    agent_path = tmp_path / ".claude" / "agents" / "plan-architect.md"
+    agent_path.write_text("custom owner agent\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(["doctor", "--cwd", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    projection = next(check for check in payload["checks"] if check["name"] == "claude projection")
+
+    assert exit_code == 0
+    assert payload["status"] == "warning"
+    assert projection["status"] == "warning"
+    assert "1 managed resource issues" in projection["message"]
+    assert (tmp_path / MANIFEST_PATH).exists()
+
+
+def test_doctor_reports_invalid_utf8_projection_manifest(tmp_path, capsys):
+    main(["init", "--cwd", str(tmp_path)])
+    (tmp_path / MANIFEST_PATH).write_bytes(b"\xff\xfe")
+    capsys.readouterr()
+
+    exit_code = main(["doctor", "--cwd", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    projection = next(check for check in payload["checks"] if check["name"] == "claude projection")
+
+    assert exit_code == 0
+    assert payload["status"] == "warning"
+    assert projection["status"] == "warning"
+    assert "1 managed resource issues" in projection["message"]

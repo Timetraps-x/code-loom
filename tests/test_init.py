@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from importlib import resources
+import pytest
+
 
 from codeloom.app.init_project import init_project, load_project_config
 
 AGENT_NAMES = (
-    "spec-analyzer.md",
-    "plan-architect.md",
-    "task-planner.md",
-    "builder.md",
-    "verifier.md",
-    "release-analyzer.md",
     "code-reviewer.md",
     "adopt-expert.md",
     "spec-reviewer.md",
@@ -18,12 +14,30 @@ AGENT_NAMES = (
     "task-reviewer.md",
 )
 
-STAGE_AGENT_RESPONSIBILITIES = {
+ROLE_NAMES = (
+    "spec-analyzer.md",
+    "plan-architect.md",
+    "task-planner.md",
+    "builder.md",
+    "verifier.md",
+    "release-analyzer.md",
+)
+
+STAGE_ROLE_RESPONSIBILITIES = {
     "spec-analyzer.md": "requirement semantics",
     "plan-architect.md": "system design",
     "task-planner.md": "execution slicing",
-    "release-analyzer.md": "delivery readiness",
+    "release-analyzer.md": "delivery conclusion",
 }
+
+ROLE_REFERENCES = (
+    ("loom-spec", "main-role.md"),
+    ("loom-plan", "main-role.md"),
+    ("loom-tasks", "main-role.md"),
+    ("loom-do", "builder-role.md"),
+    ("loom-do", "verifier-role.md"),
+    ("loom-ship", "main-role.md"),
+)
 
 REVIEWER_AGENTS = {
     "spec-reviewer.md": "spec-analyzer",
@@ -99,13 +113,21 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     agents_dir = tmp_path.joinpath(".claude", "agents")
     for agent_name in AGENT_NAMES:
         assert agents_dir.joinpath(agent_name).exists()
+    for role_name in ROLE_NAMES:
+        assert not agents_dir.joinpath(role_name).exists()
+    for skill_name, reference_name in ROLE_REFERENCES:
+        role_path = tmp_path.joinpath(".claude", "skills", skill_name, "references", reference_name)
+        assert role_path.exists()
+        assert "In the current Main conversation" in role_path.read_text(encoding="utf-8")
     assert not agents_dir.joinpath("scout.md").exists()
     assert not agents_dir.joinpath("codebase-scout.md").exists()
     assert not tmp_path.joinpath(".loom", "agents").exists()
     assert "spec-analyzer" in content
     assert "requirement semantics" in content
     assert "AskUserQuestion" in content
-    assert "temporary Claude Code child agent" in content
+    assert "current Main" in content
+    assert "use its clarification gate rather than a generic `unclear input` rule" in content
+    assert "If required user input is unclear" not in content
     assert "spec-reviewer" in content
     assert "advisory only" in content
     assert "must not write artifacts" in content
@@ -114,8 +136,8 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "release.md" in ship_content
     assert ".loom/templates/release-template.md" in ship_content
     assert "release-analyzer" in ship_content
-    assert "delivery readiness" in ship_content
-    assert "temporary Claude Code child agent" in ship_content
+    assert "current Main owns this stage's semantic analysis" in ship_content
+    assert "current Main" in ship_content
     assert "No separate reviewer agent" in ship_content
     assert "user-facing Markdown" in ship_content
     assert "extras.artifact_path" in ship_content
@@ -125,50 +147,43 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     plan_content = tmp_path.joinpath(".claude", "skills", "loom-plan", "SKILL.md").read_text(encoding="utf-8")
     tasks_content = tmp_path.joinpath(".claude", "skills", "loom-tasks", "SKILL.md").read_text(encoding="utf-8")
     do_content = tmp_path.joinpath(".claude", "skills", "loom-do", "SKILL.md").read_text(encoding="utf-8")
-    assert "plan-architect" in plan_content
-    assert "plan-reviewer" in plan_content
-    assert "system design" in plan_content
-    assert "commitment and minimal counterexample" in plan_content
-    assert "selected implementation route" in plan_content
-    assert "abstract model with shared/separate facts and variation axes" in plan_content
-    assert "business mechanism with truth, invariants, ownership, state, and collaboration" in plan_content
-    assert "necessary current-project projection" in plan_content
-    assert "smallest counterexample" in plan_content
-    assert "must not review headings or a universal field checklist" in plan_content
-    assert "avoid re-deciding a material semantic in Tasks/Do" in plan_content
-    assert "temporary Claude Code child agent" in plan_content
-    assert "task-planner" in tasks_content
-    assert "task-reviewer" in tasks_content
-    assert "execution slicing" in tasks_content
-    assert "exact candidate text and candidate identity" in tasks_content
-    assert "minimum downstream consumer obligation" in tasks_content
-    assert "new exact candidate identity and affected packet/claim" in tasks_content
-    assert "build or verify tasks only" in tasks_content
-    assert "lanes other than `build` or `verify`" in tasks_content
-    assert "do not each need independent functional verification" in tasks_content
-    assert "Verify tasks may cover multiple naturally related build tasks" in tasks_content
-    assert "Only a fact necessary to define safe slicing" in tasks_content
-    assert "Route a missing material design decision or evidence-backed design blocker upstream" in tasks_content
-    assert "Do not copy large plan sections" in tasks_content
-    assert "leave unrelated follow-up outside `tasks.md`" in tasks_content
+
+    for skill_content, role_name, reviewer_name in (
+        (plan_content, "plan-architect", "plan-reviewer"),
+        (tasks_content, "task-planner", "task-reviewer"),
+    ):
+        assert f"extras.main_role={role_name}" in skill_content
+        assert reviewer_name in skill_content
+        assert "current Main owns this stage's semantic analysis" in skill_content
+        assert "compute its SHA-256" in skill_content
+        assert "Supply the exact candidate body" in skill_content
+        assert "Review only finding closure and that delta" in skill_content
+        assert "extras.artifact_path" in skill_content
+        assert "extras.register_command" in skill_content
+        assert "specs/<branch-slug>/" not in skill_content
+
+    for semantic_method in (
+        "complete and proportionate design",
+        "Mechanism deletion must not silently become property deletion",
+        "startup/request placement",
+        "accepted result, selected mechanism",
+    ):
+        assert semantic_method not in plan_content
+        assert semantic_method not in tasks_content
+
     assert not positive_cases_dir.joinpath("simple-local-correction.md").exists()
-    assert "project `builder` Agent for `build` tasks" in do_content
-    assert "project `verifier` Agent for `verify` tasks" in do_content
+    assert "extras.main_role=builder" in do_content
+    assert "extras.main_role=verifier" in do_content
     assert "Code Reviewer" in do_content
-    assert "complete, correct, performant, maintainable, readable, secure, reliable, and testable implementation" in do_content
     assert "temporary Claude Code child agent" not in do_content
     assert "codebase-scout" not in do_content
     assert "action=begin" in do_content
     assert "extras.host_internal_flow" in do_content
     assert "reviewer_handoff" in do_content
-    assert "same Builder attempt" in do_content
+    assert "same Build attempt" in do_content
     assert "fresh Code Reviewer" in do_content
     assert "action=complete" in do_content
     assert "status=<implemented|verified|failed|blocked>" in do_content
-    for artifact_content in (plan_content, tasks_content):
-        assert "extras.artifact_path" in artifact_content
-        assert "extras.register_command" in artifact_content
-        assert "specs/<branch-slug>/" not in artifact_content
     assert "agent output contracts" in plan_content
     assert "artifact_file" in tasks_content
 
@@ -250,37 +265,78 @@ def test_init_project_force_overwrites_existing_templates(tmp_path):
 
 def test_init_project_preserves_existing_agents_without_force(tmp_path):
     init_project(tmp_path)
-    agent_path = tmp_path.joinpath(".claude", "agents", "spec-analyzer.md")
-    agent_path.write_text("custom spec analyzer", encoding="utf-8")
+    agent_path = tmp_path.joinpath(".claude", "agents", "spec-reviewer.md")
+    agent_path.write_text("custom spec reviewer", encoding="utf-8")
 
     init_project(tmp_path)
 
-    assert agent_path.read_text(encoding="utf-8") == "custom spec analyzer"
+    assert agent_path.read_text(encoding="utf-8") == "custom spec reviewer"
 
 
 def test_init_project_force_overwrites_existing_agents(tmp_path):
     init_project(tmp_path)
-    agent_path = tmp_path.joinpath(".claude", "agents", "spec-analyzer.md")
-    agent_path.write_text("custom spec analyzer", encoding="utf-8")
+    agent_path = tmp_path.joinpath(".claude", "agents", "spec-reviewer.md")
+    agent_path.write_text("custom spec reviewer", encoding="utf-8")
 
     init_project(tmp_path, force=True)
 
     content = agent_path.read_text(encoding="utf-8")
-    assert "name: spec-analyzer" in content
-    assert "requirement semantics" in content
-    assert "custom spec analyzer" not in content
+    assert "name: spec-reviewer" in content
+    assert "current Main acting in the `spec-analyzer` role" in content
+    assert "custom spec reviewer" not in content
 
 
-def test_bundled_agent_resources_are_packaged():
+def test_init_project_preserves_existing_role_reference_without_force(tmp_path):
+    init_project(tmp_path)
+    role_path = tmp_path.joinpath(".claude", "skills", "loom-plan", "references", "main-role.md")
+    role_path.write_text("custom plan role", encoding="utf-8")
+
+    init_project(tmp_path)
+
+    assert role_path.read_text(encoding="utf-8") == "custom plan role"
+
+
+def test_init_project_force_overwrites_existing_role_reference(tmp_path):
+    init_project(tmp_path)
+    role_path = tmp_path.joinpath(".claude", "skills", "loom-plan", "references", "main-role.md")
+    role_path.write_text("custom plan role", encoding="utf-8")
+
+    init_project(tmp_path, force=True)
+
+    content = role_path.read_text(encoding="utf-8")
+    assert "CodeLoom `plan-architect` role" in content
+    assert "custom plan role" not in content
+
+
+def test_init_project_rejects_role_reference_symlink(tmp_path):
+    init_project(tmp_path)
+    role_path = tmp_path.joinpath(".claude", "skills", "loom-plan", "references", "main-role.md")
+    role_path.unlink()
+    outside_target = tmp_path.parent / f"{tmp_path.name}-outside-role.md"
+    try:
+        role_path.symlink_to(outside_target)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        init_project(tmp_path, force=True)
+
+    assert role_path.is_symlink()
+    assert not outside_target.exists()
+
+
+def test_bundled_agent_and_role_resources_are_packaged():
     bundled_agents = resources.files("codeloom.agents")
+    bundled_roles = resources.files("codeloom.roles")
 
-    for agent_name in AGENT_NAMES:
-        content = bundled_agents.joinpath(agent_name).read_text(encoding="utf-8")
+    for agent_name in AGENT_NAMES + ROLE_NAMES:
+        package = bundled_roles if agent_name in ROLE_NAMES else bundled_agents
+        content = package.joinpath(agent_name).read_text(encoding="utf-8")
         assert content
-        if agent_name in STAGE_AGENT_RESPONSIBILITIES:
-            assert STAGE_AGENT_RESPONSIBILITIES[agent_name] in content
+        if agent_name in STAGE_ROLE_RESPONSIBILITIES:
+            assert STAGE_ROLE_RESPONSIBILITIES[agent_name] in content
             if agent_name == "spec-analyzer.md":
-                assert "# Recover the Real Requirement" in content
+                assert "# Recover the Complete Current Demand" in content
                 assert "incomplete, mixed, conflicting, or solution-biased human input" in content
                 assert "Seek discriminating evidence" in content
                 assert "compare the current reality with the required reality" in content
@@ -297,17 +353,13 @@ def test_bundled_agent_resources_are_packaged():
                     assert "bounded clarification" in content
             if agent_name == "plan-architect.md":
                 assert "target business implementation model and its concrete landing" in content
-                assert "# Inputs and Evidence" in content
-                assert "# Form the Business Implementation Design" in content
-                assert "Group promises that must be established by one coherent capability" in content
-                assert "authoritative, derived, attached, and external snapshot facts" in content
-                assert "# Land the Design in the Current Project" in content
-                assert "reuse, extend, correct, replace, add, or preserve a real difference" in content
-                assert "A technical surface is material when omitting it" in content
-                assert "bounded retry or attempt budget" in content
-                assert "claim, redelivery, actual invocation, and crash-after-claim" in content
-                assert "automatic, scheduled, manual/support, admin, callback, and reconciliation paths" in content
-                assert "bind each read surface to the same authoritative fact" in content
+                assert "Account for every material accepted property" in content
+                assert "# Select a complete and proportionate design" in content
+                assert "adequacy and necessity" in content
+                assert "concrete failure without it" in content
+                assert "Mechanism deletion must not silently become property deletion" in content
+                assert "The theoretical possibility" in content
+                assert "startup | refresh | write | request | background" in content
                 assert "Use the smallest useful PlantUML diagram" in content
                 assert "A closed local correction may omit diagrams" in content
                 assert "Produce a readable, self-evidencing `plan.md`" in content
@@ -316,44 +368,37 @@ def test_bundled_agent_resources_are_packaged():
                 assert "Kernel" not in content
             if agent_name == "task-planner.md":
                 assert "execution slicing recorded in `tasks.md`" in content
+                assert "accepted business and technical properties, selected mechanisms" in content
                 assert "# Form the Implementation Result Chain" in content
-                assert "current-to-target implementation results" in content
+                assert "work backward from a usable, provable result" in content
                 assert "# Slice Build Work" in content
-                assert "Do not split mechanically by UI, API, service, mapper, schema, file, class, function, or technical layer" in content
-                assert "# Design Verify Coverage" in content
+                assert "# Make Verification Executable" in content
                 assert "One verify task may cover several naturally related build tasks" in content
-                assert "start proof at the real behavior entry that creates it" in content
-                assert "Verification proves behavior established by accepted design and implementation" in content
-                assert "return the smallest Plan design gap instead of creating research or `verify` work" in content
                 assert "# Compile Self-Contained Task Packets" in content
-                assert "Inside the same captured block" in content
-                assert "A Task List item containing only `Lane`, `Complexity`, and `Revision` is invalid" in content
-                assert "Put every execution-critical fact directly beneath its own checklist line" in content
-                assert "A Plan reference supplies traceability, not missing execution context" in content
-                assert "exact authoritative state or fact, legal transition, losing-concurrency result" in content
-                assert "# Revise and Write" in content
+                assert "source-derived property" in content
+                assert "exact accepted business or technical property" in content
+                assert "startup, refresh, write, request, or background time" in content
+                assert "A generic instruction to “follow the Plan”, “optimize performance”, or “add caching”" in content
                 assert "Revision protects execution meaning, not Markdown wording" in content
-                assert "never bump every task merely because an upstream artifact changed" in content
-                assert "smallest evidence-backed design gap" in content
+                assert "increment only the affected packet's Revision" in content
+                assert "Do not hide a real design gap in a research/build/verify task" in content
         if agent_name == "builder.md":
-            assert "build-lane implementation agent" in content
-            assert "quality of one task-scoped implementation" in content
-            assert "complete, correct, performant, maintainable, readable, secure, reliable, and testable code" in content
-            assert "High quality is not a universal checklist" in content
+            assert "In the current Main conversation, act as the CodeLoom `builder` role" in content
             assert "frozen Task Packet as the execution boundary" in content
-            assert "Inspect current code, callers, consumers, tests, state/data flow" in content
-            assert "Resolve ordinary reversible implementation choices yourself" in content
-            assert "query and traversal count" in content
+            assert "what accepted properties must remain true" in content
+            assert "which selected mechanism carries each material property" in content
+            assert "Fewer lines or objects with a lost behavior" in content
+            assert "before and after placement, frequency, realistic scale, and cost" in content
+            assert "bounded startup, refresh, or write path into a frequent request path" in content
             assert "Place named facts and responsibilities with their semantic owner" in content
             assert "Do not claim independent review or full verification" in content
-            assert "Report this conflict to the host" in content
+            assert "Report this conflict through the current Skill flow" in content
             assert "do not perform workflow routing or modify upstream artifacts" in content
             assert "temporary Claude Code child agent" not in content
-            assert "Host" not in content
             assert "Kernel" not in content
             assert "SQLite" not in content
         if agent_name == "verifier.md":
-            assert "verify-lane agent" in content
+            assert "In the current Main conversation, act as the CodeLoom `verifier` role" in content
             assert "Verification is behavior judgment, not evidence-field completion" in content
             assert "Choose the strongest useful path that the current project can support" in content
             assert "A pre-seeded intermediate state does not prove creation behavior" in content
@@ -393,64 +438,61 @@ def test_bundled_agent_resources_are_packaged():
             assert "Do not" in content
             assert REVIEWER_AGENTS[agent_name] in content
             if agent_name == "spec-reviewer.md":
-                assert "bounded advisory reviewer supporting `spec-analyzer`" in content
-                assert "# Counterexample Method" in content
-                assert "smallest evidence-backed counterexample" in content
-                assert "## Commitment loss" in content
-                assert "## Evidence overreach" in content
-                assert "## Causal-chain incompleteness" in content
-                assert "## Unauthorized convergence" in content
+                assert "bounded advisory reviewer supporting the current Main acting in the `spec-analyzer` role" in content
+                assert "exact delegated candidate text and supplied candidate identity" in content
+                assert "candidate anchor" in content
+                assert "candidate-conforming failure" in content
+                assert "scoped_evidence_limit" in content
+                assert "re-review only prior material finding closure" in content
                 assert "leave the final requirement judgment to `spec-analyzer`" in content
             elif agent_name == "plan-reviewer.md":
-                assert "bounded, adversarial reviewer supporting `plan-architect`" in content
-                assert "# Independent Minimum Baseline" in content
-                assert "Do not use the candidate's headings" in content
-                assert "# Counterexample Method" in content
-                assert "smallest reasonable implementation that fully follows the candidate" in content
-                assert "## Commitment-to-model break" in content
-                assert "## Mechanism break" in content
-                assert "vary which event each reasonable consumer counts—claim, redelivery, invocation, or crash-after-claim" in content
-                assert "automatic, scheduled, manual/support, admin, callback, and reconciliation entry" in content
-                assert "same authoritative fact rather than allowing local submission to appear as external success" in content
-                assert "## Project-landing or cross-layer break" in content
-                assert "## Evidence or authority break" in content
-                assert "A candidate is underdetermined when a reasonable implementer must still choose" in content
-                assert "tools:" not in content
+                assert "bounded, adversarial reviewer supporting the current Main acting in the `plan-architect` role" in content
+                assert "minimum complete and proportionate design obligations" in content
+                assert "retained or extended existing mechanism" in content
+                assert "candidate-conforming implementation" in content
+                assert "O(1) reference access does not hide" in content
+                assert "Review only finding closure, the real delta" in content
                 assert "do not rewrite the Plan, select a replacement architecture" in content
-            elif agent_name != "task-reviewer.md":
-                assert f"bounded specialist reviewer supporting `{REVIEWER_AGENTS[agent_name]}`" in content
-                assert "Do not make final stage readiness decisions" in content
-            if agent_name == "task-reviewer.md":
-                assert "bounded, adversarial reviewer supporting `task-planner`" in content
-                assert "Use the exact candidate text and supplied candidate identity" in content
-                assert "# Independent Consumer Baseline" in content
-                assert "# Simulate the Consumer" in content
-                assert "# Falsify" in content
-                assert "# Hand Back" in content
-                assert "first isolate the packet at its checklist line" in content
-                assert "A metadata-only Task List item is not saved by a table, delivery map, or later `Task Notes` section" in content
-                assert "Later reader notes, delivery maps, or global prose cannot repair" in content
-                assert "disguise evidence needed to select or finish Plan design as a `verify` task" in content
-                assert "generic Plan reference the only source of an authoritative fact" in content
-                assert "pre-seeded intermediate state while omitting the real creation entry" in content
-                assert "turn grouped verification into an unrelated mega-batch" in content
-                assert "duplicate IDs, dangling build/verify relations" in content
-                assert "say so without treating the result as approval" in content
+            elif agent_name == "task-reviewer.md":
+                assert "bounded, adversarial reviewer supporting the current Main acting in the `task-planner` role" in content
+                assert "exact candidate text and supplied candidate identity" in content
+                assert "exact packet/relation anchor" in content
+                assert "candidate-conforming downstream failure" in content
+                assert "Review only finding closure, those changes" in content
+                assert "scoped evidence limit" in content
+            else:
+                assert "attempt-scoped diff" in content
+                assert "review-object integrity" in content
+                assert "blocked` only when the review object is unavailable, stale, or invalid" in content
 
-def test_agent_tool_whitelist_removal_is_limited_to_requested_agents():
+def test_agent_tool_whitelist_removal_is_limited_to_subagents():
     bundled_agents = resources.files("codeloom.agents")
-    removed = (
-        "adopt-expert.md",
-        "plan-architect.md",
-        "plan-reviewer.md",
-        "release-analyzer.md",
-        "spec-analyzer.md",
-        "spec-reviewer.md",
-        "task-planner.md",
-        "task-reviewer.md",
-    )
-    for agent_name in removed:
+    for agent_name in AGENT_NAMES:
         content = bundled_agents.joinpath(agent_name).read_text(encoding="utf-8")
         assert "tools: Read, Glob, Grep" not in content
 
-    assert "tools: Read, Edit, Write, Bash, Grep, Glob" in bundled_agents.joinpath("builder.md").read_text(encoding="utf-8")
+    bundled_roles = resources.files("codeloom.roles")
+    for role_name in ROLE_NAMES:
+        content = bundled_roles.joinpath(role_name).read_text(encoding="utf-8")
+        assert "tools:" not in content
+
+
+def test_tasks_and_do_project_updated_role_handoffs(tmp_path):
+    init_project(tmp_path)
+    skills = tmp_path / ".claude" / "skills"
+    tasks_role = (skills / "loom-tasks/references/main-role.md").read_text(encoding="utf-8")
+    tasks_skill = (skills / "loom-tasks/SKILL.md").read_text(encoding="utf-8")
+    assert "transferred result premise" in tasks_role
+    assert "transferred result premise" not in tasks_skill
+    assert "Do not re-litigate" in (skills / "loom-do/references/builder-role.md").read_text(encoding="utf-8")
+    assert "proof_limit:" in (skills / "loom-do/references/verifier-role.md").read_text(encoding="utf-8")
+    assert "trustworthy seal-to-seal delta" in (skills / "loom-do/SKILL.md").read_text(encoding="utf-8")
+    reviewer = tmp_path / ".claude/agents/code-reviewer.md"
+    assert "obligation_source:" in reviewer.read_text(encoding="utf-8")
+
+def test_ship_projection_matches_bundled_role_and_template(tmp_path):
+    init_project(tmp_path)
+    role = resources.files("codeloom.roles").joinpath("release-analyzer.md").read_text(encoding="utf-8")
+    template = resources.files("codeloom.templates").joinpath("release-template.md").read_text(encoding="utf-8")
+    assert (tmp_path / ".claude/skills/loom-ship/references/main-role.md").read_text(encoding="utf-8") == role
+    assert (tmp_path / ".loom/templates/release-template.md").read_text(encoding="utf-8") == template

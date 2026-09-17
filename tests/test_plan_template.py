@@ -127,7 +127,16 @@ def test_templates_preserve_coding_goal_anchors():
         "Omit it for a closed local correction",
         "#### Scenario evidence",
         "input facts → action → persisted fact/state",
-        "participating mechanisms and the facts or invariants it protects",
+        "not technical layers, pages, tables, APIs, Jobs, files, individual Spec properties",
+        "Artifact is not a property ledger",
+        "optional thinking aids, not required fields",
+        "accepted or prohibited result first, then protected truth",
+        "must not replace the capability contract",
+        "Do not repeat a blacklist",
+        "omission prompts, not required layer fields",
+        "not required layer fields or a capability-by-layer matrix",
+        "State each shared design once",
+        "Do not duplicate the shared design or build a capability-by-layer table",
         "based_on_spec_hash` identifies the accepted Spec artifact revision",
         "does not replace readable traceability",
     ):
@@ -179,15 +188,14 @@ def test_templates_preserve_coding_goal_anchors():
         "Delivery Conclusion",
         "Release readiness: ready | blocked",
         "Goal result confidence: proven | partially_proven | not_proven",
-        "Delivered Outcomes and Boundaries",
-        "Proof and Limitations",
+        "delivered user or system result",
+        "Verification and Limitations",
         "Do not make completed tasks or successful commands stand in for goal achievement",
-        "Include only involved SQL/data, configuration, permissions, UI/menu, external-system",
-        "rather than completing a fixed checklist",
-        "Risks, Manual Actions, and Owner Decisions",
-        "A risk is accepted only when an identified owner explicitly accepted it",
+        "Release Notes, When Needed",
+        "only material release actions or cautions",
+        "Do not invent owners, timing, action completion, or risk acceptance",
         "Keep the actual release-owner decision separate",
-        "Evidence References",
+        "compact evidence references beside the claims",
     ):
         assert expected in release
 
@@ -211,22 +219,22 @@ def test_tasks_template_declares_task_metadata_contract():
     ):
         assert expected in tasks
 
-def test_agent_templates_define_main_and_subagent_contracts():
-    main_agent = _template("agent-template.md")
+def test_role_and_subagent_templates_define_ownership_contracts():
+    main_role = _template("agent-template.md")
     subagent = _template("subagent-template.md")
 
     for expected in (
-        "Canonical template for CodeLoom stage-owner agents",
-        "description: Use this agent to <create/revise/execute/verify/release> <stage artifact or stage work>.",
-        "A subagent result is evidence, not authority",
-        "Do not delegate the stage decision, artifact ownership, or readiness conclusion to a subagent",
+        "Canonical template for CodeLoom stage-owner roles loaded by generated Skills",
+        "In the current Main conversation, act as the CodeLoom `<stage-role-name>` role.",
+        "Its result is evidence, not authority",
+        "Do not delegate the stage decision, artifact ownership, semantic classification, architecture selection, task assignment, or readiness conclusion",
         "Intent",
         "Boundary",
         "Task",
         "Evidence",
         "Readiness",
     ):
-        assert expected in main_agent
+        assert expected in main_role
 
     for expected in (
         "Canonical template for CodeLoom bounded specialist agents",
@@ -239,3 +247,73 @@ def test_agent_templates_define_main_and_subagent_contracts():
         "- impact:",
     ):
         assert expected in subagent
+
+def test_tasks_template_preserves_premises_without_new_schema():
+    tasks = _template("tasks-template.md")
+    for text in ("accepted business or system result", "transferred result premise", "real behavior or inspection entry", "Relation reachability alone", "Missing ideal evidence alone", "labels below are examples, not required fields"):
+        assert text in tasks
+    main_role = _template("agent-template.md")
+    assert "Dedicated Builder and Verifier prompts override" in main_role
+    assert "attempt progression belongs to the Host" in main_role
+
+def test_release_template_defaults_to_short_prose_without_table_scaffolding():
+    release = _template("release-template.md")
+    for text in (
+        "supplied Build and Verify conclusions, not a new audit",
+        "optional prose guides",
+        "combine them for a small delivery",
+        "explicit recorded statement and source",
+        "An unmet required precondition remains blocking",
+        "Omit this section when there are none",
+        "Do not produce per-property tables, task recaps, or N/A inventories",
+    ):
+        assert text in release
+    assert not any(line.startswith("|") for line in release.splitlines())
+
+
+def test_plan_and_tasks_templates_carry_design_and_execution_handoffs():
+    plan = _template("plan-template.md")
+    for text in (
+        "positive path that still guarantees the accepted properties",
+        "residual failure they prevent",
+        "what is avoided, and what remains input-sized",
+        "Separate applicable shared-platform guarantees",
+        "replace superseded decisions rather than append exceptions",
+    ):
+        assert text in plan
+    tasks = _template("tasks-template.md")
+    for text in (
+        "usable result or input and its locatable source",
+        "known unavailable prerequisite and smallest recovery action",
+        "Do not invent a separate harness task for every fixture",
+        "related evidence does not automatically require an execution dependency",
+        "merely reissuing tasks or repeating narrower checks is not resolution",
+        "otherwise merge related work into a coherent result",
+        "Neither shared repository/release nor a target task count",
+        "inputs needed to start implementation, runnable conditions needed for integration",
+        "without weakening its stop or required proof",
+    ):
+        assert text in tasks
+
+
+
+def test_templates_distinguish_candidate_omissions_from_upstream_meaning():
+    spec = _template("spec-template.md")
+    plan = _template("plan-template.md")
+    tasks = _template("tasks-template.md")
+    assert "current delivery, an actual rollout prerequisite, and a future concern" in spec
+    assert "Do not silently defer an accepted compatibility" in spec
+    assert "Missing requirement meaning cannot be repaired by inventing a design premise" in plan
+    assert "A decision missing from the candidate packet is not necessarily missing from Plan" in tasks
+    assert "Only when task construction would choose or change a material Plan-owned semantic" in tasks
+
+
+def test_authoring_templates_separate_investigation_review_and_stage_ownership():
+    main = _template("agent-template.md")
+    child = _template("subagent-template.md")
+    assert "Specialize the decision path to the stage" in main
+    assert "A valid return identifies the missing/conflicting upstream meaning" in main
+    assert "do not impose a Spec/Plan/Tasks reviewer loop" in main
+    assert "fact investigation or advisory review" in child
+    assert "Dedicated Do Code Reviewer protocols take precedence" in child
+    assert "not adopting your remedy does not qualify" in child

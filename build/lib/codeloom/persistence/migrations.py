@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 13
 
 SCHEMA = [
     """
@@ -70,6 +70,7 @@ SCHEMA = [
         start_head TEXT,
         snapshot_semantics TEXT,
         start_status_json TEXT,
+        snapshot_repositories_json TEXT,
         latest_sealed_tree TEXT,
         latest_seal_revision INTEGER NOT NULL DEFAULT 0,
         latest_review_status TEXT,
@@ -77,12 +78,14 @@ SCHEMA = [
         task_packet_hash TEXT,
         task_packet_ref TEXT,
         task_packet_version TEXT,
+        task_packet_json TEXT,
         input_attempts_json TEXT,
         completion_token TEXT,
         completion_status TEXT,
         completion_summary TEXT,
         completion_candidate_ref TEXT,
         completion_candidate_hash TEXT,
+        completion_candidate_json TEXT,
         status TEXT NOT NULL,
         summary TEXT,
         created_at TEXT NOT NULL,
@@ -101,6 +104,8 @@ SCHEMA = [
         stdout_ref TEXT,
         stderr_ref TEXT,
         summary_ref TEXT,
+        summary_text TEXT,
+        summary_hash TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(attempt_id) REFERENCES attempts(id)
     )
@@ -139,11 +144,23 @@ SCHEMA = [
         sealed_tree TEXT NOT NULL,
         status TEXT NOT NULL,
         review_scope TEXT NOT NULL,
-        summary_ref TEXT NOT NULL,
+        summary_ref TEXT,
+        summary_json TEXT,
         summary_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY(attempt_id) REFERENCES attempts(id),
         UNIQUE(attempt_id, seal_revision)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sealed_changes (
+        attempt_id INTEGER NOT NULL,
+        seal_revision INTEGER NOT NULL,
+        sealed_tree TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        PRIMARY KEY (attempt_id, seal_revision),
+        FOREIGN KEY(attempt_id) REFERENCES attempts(id)
     )
     """,
 ]

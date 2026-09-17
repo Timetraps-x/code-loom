@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 from typing import Literal
 
 from codeloom import __version__
-from codeloom.app.claude_plugin import bundled_claude_skill_contents
+from codeloom.app.claude_plugin import bundled_claude_skill_resources
 
 ProjectionGroup = Literal["agents", "skills"]
 ProjectionStatus = Literal[
@@ -22,11 +22,40 @@ ProjectionStatus = Literal[
     "missing",
     "unmanaged",
     "retired",
+    "removed",
+    "migration_conflict",
     "invalid_manifest",
 ]
 
 MANIFEST_SCHEMA = 1
 MANIFEST_PATH = PurePosixPath(".loom/managed/claude-code.json")
+
+RETIRED_MAIN_AGENT_REPLACEMENTS = {
+    PurePosixPath(".claude/agents/spec-analyzer.md"): (
+        PurePosixPath(".claude/skills/loom-spec/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-spec/references/main-role.md"),
+    ),
+    PurePosixPath(".claude/agents/plan-architect.md"): (
+        PurePosixPath(".claude/skills/loom-plan/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-plan/references/main-role.md"),
+    ),
+    PurePosixPath(".claude/agents/task-planner.md"): (
+        PurePosixPath(".claude/skills/loom-tasks/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-tasks/references/main-role.md"),
+    ),
+    PurePosixPath(".claude/agents/builder.md"): (
+        PurePosixPath(".claude/skills/loom-do/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-do/references/builder-role.md"),
+    ),
+    PurePosixPath(".claude/agents/verifier.md"): (
+        PurePosixPath(".claude/skills/loom-do/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-do/references/verifier-role.md"),
+    ),
+    PurePosixPath(".claude/agents/release-analyzer.md"): (
+        PurePosixPath(".claude/skills/loom-ship/SKILL.md"),
+        PurePosixPath(".claude/skills/loom-ship/references/main-role.md"),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -67,12 +96,12 @@ def bundled_claude_resources() -> tuple[ProjectionResource, ...]:
     )
     skills = tuple(
         ProjectionResource(
-            path=PurePosixPath(".claude") / "skills" / f"loom-{command}" / "SKILL.md",
+            path=PurePosixPath(".claude") / "skills" / relative_path,
             group="skills",
-            source=f"generated:claude_plugin:loom-{command}",
+            source=f"generated:claude_plugin:{relative_path.as_posix()}",
             content=content,
         )
-        for command, content in bundled_claude_skill_contents().items()
+        for relative_path, content in bundled_claude_skill_resources().items()
     )
     return agents + skills
 
@@ -104,7 +133,11 @@ def upgrade_claude_projection(
     selected_resources = {
         path: resource for path, resource in resources_by_path.items() if resource.group in selected_groups
     }
-    resolutions = _parse_resolutions(resolve_bundle_paths or set(), selected_resources)
+    bundle_resolutions, remove_resolutions = _parse_resolutions(
+        resolve_bundle_paths or set(),
+        selected_resources,
+        selected_groups,
+    )
     manifest_path = repo_path.resolve() / MANIFEST_PATH
     manifest = _load_manifest(manifest_path)
     if manifest_path.exists() and manifest is None:
@@ -124,22 +157,88 @@ def upgrade_claude_projection(
     legacy = _legacy_hashes()
     results: list[ProjectionResult] = []
     next_files = dict(files)
+    active_results: dict[PurePosixPath, ProjectionResult] = {}
+    active_writes: list[tuple[Path, ProjectionResource]] = []
 
     for path, resource in selected_resources.items():
-        destination = _destination(repo_path, path)
+        try:
+            destination = _destination(repo_path, path)
+        except ValueError as exc:
+            result = ProjectionResult(path.as_posix(), resource.group, "conflict", str(exc))
+            results.append(result)
+            active_results[path] = result
+            continue
         entry = files.get(path.as_posix())
-        result, installed_digest = _classify_resource(destination, resource, entry, legacy, path in resolutions)
+        result, installed_digest = _classify_resource(
+            destination,
+            resource,
+            entry,
+            legacy,
+            path in bundle_resolutions,
+        )
         results.append(result)
+        active_results[path] = result
         if result.status in {"created", "updated", "adopted"}:
             next_files[path.as_posix()] = _manifest_entry(resource, installed_digest)
-            if not dry_run and result.status != "adopted":
-                _atomic_write(destination, resource.content)
+            if result.status != "adopted":
+                active_writes.append((destination, resource))
         elif result.status == "unchanged" and entry:
             next_files[path.as_posix()] = _manifest_entry(resource, resource.digest)
 
+    if not dry_run:
+        for destination, resource in active_writes:
+            _atomic_write(destination, resource.content)
+
+    if "agents" in selected_groups:
+        for path, replacements in RETIRED_MAIN_AGENT_REPLACEMENTS.items():
+            raw_path = path.as_posix()
+            entry = files.get(raw_path)
+            destination_path = repo_path.resolve().joinpath(*path.parts)
+            destination_present = destination_path.exists() or destination_path.is_symlink()
+            if entry is None and not destination_present:
+                continue
+            replacements_ready = _replacement_resources_ready(
+                repo_path,
+                replacements,
+                resources_by_path,
+                active_results,
+            )
+            try:
+                destination = _destination(repo_path, path)
+            except ValueError as exc:
+                results.append(ProjectionResult(raw_path, "agents", "migration_conflict", str(exc)))
+                continue
+            result, remove_file = _classify_retired_main_agent(
+                destination,
+                path,
+                entry,
+                legacy,
+                path in remove_resolutions,
+                replacements_ready,
+            )
+            if remove_file and not dry_run:
+                try:
+                    destination.unlink()
+                except OSError as exc:
+                    result = ProjectionResult(
+                        raw_path,
+                        "agents",
+                        "migration_conflict",
+                        f"retired Main Agent could not be removed: {exc}",
+                    )
+                    remove_file = False
+            results.append(result)
+            if result.status == "removed":
+                next_files.pop(raw_path, None)
+
     for raw_path, entry in files.items():
         path = _safe_manifest_path(raw_path)
-        if path is None or path in resources_by_path or entry.get("group") not in selected_groups:
+        if (
+            path is None
+            or path in resources_by_path
+            or path in RETIRED_MAIN_AGENT_REPLACEMENTS
+            or entry.get("group") not in selected_groups
+        ):
             continue
         results.append(
             ProjectionResult(
@@ -150,7 +249,7 @@ def upgrade_claude_projection(
             )
         )
 
-    if not dry_run and any(result.status in {"created", "updated", "adopted", "unchanged"} for result in results):
+    if not dry_run and next_files != files:
         _write_manifest(manifest_path, next_files, resources_by_path)
 
     return _payload(dry_run, results)
@@ -176,6 +275,8 @@ def _classify_resource(
     legacy: dict[str, set[str]],
     resolve_bundle: bool,
 ) -> tuple[ProjectionResult, str]:
+    if destination.exists() and not destination.is_file():
+        return ProjectionResult(resource.path.as_posix(), resource.group, "conflict", "projection resource is not a regular file"), ""
     if resolve_bundle:
         return ProjectionResult(resource.path.as_posix(), resource.group, "created" if not destination.exists() else "updated", "explicitly resolved with bundled content"), resource.digest
     if not destination.exists():
@@ -183,7 +284,10 @@ def _classify_resource(
             return ProjectionResult(resource.path.as_posix(), resource.group, "missing", "managed resource is missing; use --resolve <path>=bundle to restore it"), ""
         return ProjectionResult(resource.path.as_posix(), resource.group, "created", "new bundled resource"), resource.digest
 
-    current_digest = normalized_digest(destination.read_text(encoding="utf-8"))
+    try:
+        current_digest = normalized_digest(destination.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        return ProjectionResult(resource.path.as_posix(), resource.group, "conflict", f"projection resource cannot be read: {exc}"), ""
     if isinstance(entry, dict):
         installed = entry.get("installed_sha256")
         if current_digest == resource.digest:
@@ -200,12 +304,92 @@ def _classify_resource(
     return ProjectionResult(resource.path.as_posix(), resource.group, "unmanaged", "existing resource is not a recognized CodeLoom projection"), ""
 
 
+def _replacement_resources_ready(
+    repo_path: Path,
+    replacements: tuple[PurePosixPath, ...],
+    resources_by_path: dict[PurePosixPath, ProjectionResource],
+    active_results: dict[PurePosixPath, ProjectionResult],
+) -> bool:
+    ready_statuses = {"created", "updated", "adopted", "unchanged"}
+    for path in replacements:
+        resource = resources_by_path.get(path)
+        if resource is None:
+            return False
+        result = active_results.get(path)
+        if result is not None:
+            if result.status not in ready_statuses:
+                return False
+            continue
+        try:
+            destination = _destination(repo_path, path)
+            if not destination.is_file():
+                return False
+            if normalized_digest(destination.read_text(encoding="utf-8")) != resource.digest:
+                return False
+        except (OSError, UnicodeError, ValueError):
+            return False
+    return True
+
+
+def _classify_retired_main_agent(
+    destination: Path,
+    path: PurePosixPath,
+    entry: object,
+    legacy: dict[str, set[str]],
+    resolve_remove: bool,
+    replacements_ready: bool,
+) -> tuple[ProjectionResult, bool]:
+    raw_path = path.as_posix()
+    if not replacements_ready:
+        return (
+            ProjectionResult(
+                raw_path,
+                "agents",
+                "migration_conflict",
+                "replacement Skill and Main Role reference must be bundle-current before retiring this owner Agent",
+            ),
+            False,
+        )
+    if not destination.exists():
+        return ProjectionResult(raw_path, "agents", "removed", "retired owner Agent was already absent"), False
+    if not destination.is_file():
+        return (
+            ProjectionResult(raw_path, "agents", "migration_conflict", "retired owner Agent is not a regular file"),
+            False,
+        )
+    if resolve_remove:
+        return ProjectionResult(raw_path, "agents", "removed", "explicitly resolved by removing retired owner Agent"), True
+    try:
+        current_digest = normalized_digest(destination.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        return (
+            ProjectionResult(raw_path, "agents", "migration_conflict", f"retired owner Agent cannot be read: {exc}"),
+            False,
+        )
+    installed = entry.get("installed_sha256") if isinstance(entry, dict) else None
+    trusted = bool(installed and current_digest == installed) or current_digest in legacy.get(raw_path, set())
+    if trusted:
+        return ProjectionResult(raw_path, "agents", "removed", "unchanged retired owner Agent can be removed"), True
+    return (
+        ProjectionResult(
+            raw_path,
+            "agents",
+            "migration_conflict",
+            "retired owner Agent has local or unrecognized content; move it aside or use --resolve <path>=remove",
+        ),
+        False,
+    )
+
+
 def _payload(dry_run: bool, results: list[ProjectionResult]) -> dict[str, object]:
     resources = [
         {"path": result.path, "group": result.group, "status": result.status, "message": result.message}
         for result in sorted(results, key=lambda result: result.path)
     ]
-    has_conflicts = any(result["status"] in {"conflict", "missing", "invalid_manifest"} for result in resources)
+    has_conflicts = any(
+        result["status"] in {"conflict", "missing", "migration_conflict", "invalid_manifest"}
+        for result in resources
+    )
     return {
         "status": "conflict" if has_conflicts else "ok",
         "dry_run": dry_run,
@@ -223,15 +407,26 @@ def _parse_groups(group: str) -> set[ProjectionGroup]:
     raise ValueError("group must be one of: all, agents, skills")
 
 
-def _parse_resolutions(values: set[str], resources: dict[PurePosixPath, ProjectionResource]) -> set[PurePosixPath]:
-    resolved: set[PurePosixPath] = set()
+def _parse_resolutions(
+    values: set[str],
+    resources: dict[PurePosixPath, ProjectionResource],
+    selected_groups: set[ProjectionGroup],
+) -> tuple[set[PurePosixPath], set[PurePosixPath]]:
+    bundled: set[PurePosixPath] = set()
+    removed: set[PurePosixPath] = set()
     for value in values:
         path, separator, target = value.partition("=")
         candidate = _safe_manifest_path(path)
-        if separator != "=" or target != "bundle" or candidate is None or candidate not in resources:
-            raise ValueError("--resolve must use a bundled relative path in the form <path>=bundle")
-        resolved.add(candidate)
-    return resolved
+        if separator != "=" or candidate is None:
+            raise ValueError("--resolve must use <active-path>=bundle or <retired-owner-agent-path>=remove")
+        if target == "bundle" and candidate in resources:
+            bundled.add(candidate)
+            continue
+        if target == "remove" and "agents" in selected_groups and candidate in RETIRED_MAIN_AGENT_REPLACEMENTS:
+            removed.add(candidate)
+            continue
+        raise ValueError("--resolve must use <active-path>=bundle or <retired-owner-agent-path>=remove")
+    return bundled, removed
 
 
 def _safe_manifest_path(value: object) -> PurePosixPath | None:
@@ -246,6 +441,12 @@ def _safe_manifest_path(value: object) -> PurePosixPath | None:
 def _destination(repo_path: Path, path: PurePosixPath) -> Path:
     root = repo_path.resolve()
     destination = root.joinpath(*path.parts)
+    relative_parent = destination.parent.relative_to(root)
+    current = root
+    for part in relative_parent.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("projection resource parent cannot be a symbolic link")
     resolved_parent = destination.parent.resolve()
     if root != resolved_parent and root not in resolved_parent.parents:
         raise ValueError("projection path escapes repository")
@@ -274,7 +475,7 @@ def _load_manifest(path: Path) -> dict[str, object] | None:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict) or data.get("schema") != MANIFEST_SCHEMA or data.get("integration") != "claude-code":
         return None

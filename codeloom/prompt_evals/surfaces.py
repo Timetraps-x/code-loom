@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib import resources
 
-from codeloom.app.claude_plugin import _agent_rule, _argument_rule, _content_rule
+from codeloom.app.claude_plugin import _argument_rule, _content_rule, _main_role_rule
 from codeloom.prompt_evals.cases import PromptSurfaceRef
 
 
@@ -13,10 +13,12 @@ class MissingPromptSurfaceError(Exception):
 def resolve_prompt_surface(surface: PromptSurfaceRef) -> str:
     if surface.kind == "agent":
         return _resource_text("codeloom.agents", surface.ref)
+    if surface.kind == "role":
+        return _resource_text("codeloom.roles", surface.ref)
     if surface.kind == "template":
         return _resource_text("codeloom.templates", surface.ref)
-    if surface.kind == "skill_agent_rule":
-        return _agent_rule(surface.ref)
+    if surface.kind in {"skill_agent_rule", "skill_main_role_rule"}:
+        return _main_role_rule(surface.ref)
     if surface.kind == "skill_content_rule":
         return _content_rule(surface.ref)
     if surface.kind == "skill_argument_rule":

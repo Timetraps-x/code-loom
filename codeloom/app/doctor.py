@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from codeloom.app.claude_plugin import COMMANDS
 from codeloom.app.constitution import constitution_status
 from codeloom.app.init_project import load_project_config
 from codeloom.app.managed_projection import projection_status
+from codeloom.app.status import get_status
 from codeloom.kernel.clients import create_runtime_client
 from codeloom.persistence.migrations import CURRENT_SCHEMA_VERSION
 from codeloom.persistence.sqlite import SQLiteStore
@@ -31,6 +33,40 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
     else:
         _add_check(checks, "sqlite database", "failed", f"missing: {store.db_path}")
 
+
+    branch_name = _current_branch(repo_path)
+    if branch_name and store.db_path.exists():
+        status = get_status(repo_path, branch_name)
+        artifacts = status.get("artifacts") or {}
+        repair = next(
+            (
+                artifact.get("recovery_command")
+                for kind in ("spec", "plan", "tasks")
+                if (artifact := artifacts.get(kind)) and artifact.get("state") != "current"
+            ),
+            None,
+        )
+        if repair:
+            _add_check(checks, "artifact lineage", "warning", f"new Do work is blocked; run {repair}")
+        active = next(
+            (attempt for attempt in status.get("latest_attempts", []) if attempt.get("status") in {"running", "completing"}),
+            None,
+        )
+        if active:
+            _add_check(
+                checks,
+                "active Do attempt",
+                "warning",
+                f"recover with {active.get('recovery_command')}; emergency release: {active.get('unlock_command')}",
+            )
+        continuation = (status.get("session") or {}).get("continuation")
+        if continuation:
+            _add_check(
+                checks,
+                "workflow continuation",
+                "warning",
+                f"continue at /loom-{continuation.get('stage')} for attempt {continuation.get('attempt_id') or 'n/a'}",
+            )
     artifact_root = repo_path / config.artifact_root
     parent = artifact_root if artifact_root.exists() else artifact_root.parent
     if parent.exists():
@@ -57,7 +93,11 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
         _add_check(checks, "claude skills", "ok", "all loom skills present")
 
     projection = projection_status(repo_path)
-    projection_issues = [result for result in projection if result.status in {"conflict", "missing", "invalid_manifest"}]
+    projection_issues = [
+        result
+        for result in projection
+        if result.status in {"conflict", "missing", "migration_conflict", "invalid_manifest"}
+    ]
     if projection_issues:
         _add_check(checks, "claude projection", "warning", f"{len(projection_issues)} managed resource issues; run loom upgrade --claude-code --dry-run")
     else:
@@ -81,6 +121,18 @@ def run_doctor(cwd: Path) -> dict[str, Any]:
 
     return {"status": _overall_status(checks), "checks": checks}
 
+
+
+def _current_branch(repo_path: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = result.stdout.strip()
+    return branch or None
 
 def _add_check(checks: list[dict[str, str]], name: str, status: str, message: str) -> None:
     checks.append({"name": name, "status": status, "message": message})

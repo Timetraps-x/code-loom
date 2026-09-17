@@ -156,10 +156,12 @@ def render_status(data: dict[str, Any]) -> str:
 
     lines.append("Artifacts:")
     for kind, artifact in data.get("artifacts", {}).items():
-        state = "present" if artifact.get("exists") else "missing"
+        state = artifact.get("state") or ("present" if artifact.get("exists") else "missing")
         content_hash = _short_hash(artifact.get("hash"))
         suffix = f" ({content_hash})" if content_hash else ""
-        lines.append(f"  - {kind}: {state}{suffix} {artifact.get('path')}")
+        reason = f" - {artifact.get('stale_reason')}" if artifact.get("stale_reason") else ""
+        recovery = f"; run {artifact.get('recovery_command')}" if state != "current" and artifact.get("recovery_command") else ""
+        lines.append(f"  - {kind}: {state}{suffix} {artifact.get('path')}{reason}{recovery}")
 
     findings = data.get("open_findings") or []
     lines.append(f"Open findings: {len(findings)}")
@@ -180,6 +182,10 @@ def render_status(data: dict[str, Any]) -> str:
         lines.append(
             f"  - {attempt.get('task_id')} [{lane}/{complexity}] a{attempt.get('attempt_no')}: {attempt.get('status')}{state}{blockers}{suffix}"
         )
+        if attempt.get("recovery_command"):
+            lines.append(f"      recover: {attempt.get('recovery_command')}")
+        if attempt.get("unlock_command"):
+            lines.append(f"      unlock: {attempt.get('unlock_command')}")
 
     if data.get("errors"):
         lines.append("Errors:")

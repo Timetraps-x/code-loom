@@ -26,6 +26,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--cwd", default=".")
     init_parser.add_argument("--force", action="store_true")
+    init_parser.add_argument("--refresh-repositories", action="store_true", help="rediscover Git roots and update only repository scope in existing project configuration")
     init_parser.add_argument("--language", choices=["en", "zh"], default="en", help="language for specs deliverable artifacts")
     init_parser.add_argument("--claude-code", action="store_true", help="install Claude Code project skills")
     init_parser.add_argument("--codex", action="store_true", help="select Codex integration when supported")
@@ -65,7 +66,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.subcommand == "init":
         integrations = _parse_init_integrations(args)
-        created, path = init_project(Path(args.cwd), force=args.force, integrations=integrations, language=args.language)
+        try:
+            created, path = init_project(Path(args.cwd), force=args.force, integrations=integrations,
+                                         language=args.language, refresh_repositories=args.refresh_repositories)
+        except (ValueError, OSError) as exc:
+            emit_data({"status": "failed", "message": str(exc), "created": False,
+                       "project_path": str(Path(args.cwd).resolve() / ".loom/project.yml"),
+                       "errors": [str(exc)]}, args.json_output, render_init)
+            return 1
         payload = {
             "status": "ok",
             "message": "project initialized" if created else "project already initialized",
@@ -73,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "project_path": path,
             "integrations": sorted(integrations),
             "language": args.language,
+            "repositories_refreshed": args.refresh_repositories,
         }
         emit_data(payload, args.json_output, render_init)
         return 0

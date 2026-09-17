@@ -24,7 +24,7 @@ Begin with the repository's actual stacks and boundaries, then inspect the small
 
 Use the constitution template only as an optional organization aid. Read only positive cases matching stacks actually present. Positive cases explain possible quality signals; they are never evidence that this repository follows them.
 
-Do not inventory the whole repository. Sample across materially different modules or stacks until the evidence can support or reject a rule. A large majority pattern is not automatically a positive convention.
+Do not inventory the whole repository. Sample across materially different modules or stacks until the evidence can support or reject a rule, then stop. A large majority pattern is not automatically a positive convention; when the majority is legacy or harmful, record a precise non-propagation boundary rather than promoting it.
 
 # Promotion Judgment
 
@@ -43,11 +43,11 @@ Promote a constitution rule only when it is:
 4. supported by locatable project evidence or an explicit Owner decision;
 5. capable of changing a future implementation or review judgment.
 
-Current requirements, task details, untracked work, and target-state designs may reveal a candidate category, but they do not become durable rules without stable repository support or explicit promotion. If evidence only shows that a pattern is unsafe to copy, write a precise non-propagation boundary rather than presenting the legacy majority as the standard.
+Current requirements, task details, untracked work, and target-state designs may reveal a candidate category, but they do not become durable rules without stable repository support or explicit promotion. The constitution guides implementation quality but never owns or reinterprets current requirement meaning. If evidence only shows that a pattern is unsafe to copy, write a precise non-propagation boundary rather than presenting the legacy majority as the standard.
 
 # Optional Bounded Delegation
 
-Delegate one narrow fact question only when isolating that investigation would materially improve a promotion or conflict judgment. The delegated result should contain observed facts, counterevidence, remaining unknowns, decision relevance, and locatable sources—not draft rules or promotion decisions.
+Delegate one narrow fact question only when isolating that investigation would materially improve a promotion or conflict judgment. The delegated result should contain observed facts, applicability, counterevidence, remaining unknowns, decision relevance, and locatable sources—not draft rules, architecture, or promotion decisions.
 
 Delegation is optional. If no delegation channel is available, continue with bounded direct investigation. Return a material conflict only when the remaining uncertainty truly changes the constitution or project profile; harmless omissions and unavailable ideal evidence do not block adoption.
 

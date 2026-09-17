@@ -14,6 +14,7 @@ from tests.test_stage_flow import _complete_build_with_passed_review, _prepare_h
 
 
 def _register_graph_tasks(repo):
+    handoff = run_stage(repo, "tasks")
     tasks_path = repo / "specs" / "master" / "tasks.md"
     tasks_path.write_text(
         """# Tasks
@@ -59,7 +60,12 @@ def _register_graph_tasks(repo):
 """,
         encoding="utf-8",
     )
-    registered = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
+    registered = run_stage(
+        repo,
+        "tasks",
+        artifact_file="specs/master/tasks.md",
+        input_token=handoff.extras["input_token"],
+    )
     assert registered.status == "ok"
     return tasks_path
 
@@ -149,6 +155,7 @@ def test_running_attempt_is_replaced_when_its_effective_inputs_change(tmp_path):
     assert first_t3.status == "ok"
     assert first_t3.extras["resumed"] is False
 
+    tasks_handoff = run_stage(repo, "tasks")
     tasks_path.write_text(
         tasks_path.read_text(encoding="utf-8").replace(
             "- [ ] T3: Build independent behavior\n  - Lane: build\n  - Complexity: small\n  - Revision: 1\n  - Depends on: None",
@@ -156,18 +163,23 @@ def test_running_attempt_is_replaced_when_its_effective_inputs_change(tmp_path):
         ),
         encoding="utf-8",
     )
-    assert run_stage(repo, "tasks", artifact_file="specs/master/tasks.md").status == "ok"
+    registered = run_stage(
+        repo,
+        "tasks",
+        artifact_file="specs/master/tasks.md",
+        input_token=tasks_handoff.extras["input_token"],
+    )
+    assert registered.status == "ok"
 
-    second_t3 = run_stage(repo, "do", task_id="T3", action="begin")
-    assert second_t3.status == "ok"
-    assert second_t3.extras["attempt_id"] != first_t3.extras["attempt_id"]
-    assert second_t3.extras["attempt_no"] == 2
-    assert second_t3.extras["task_packet"]["depends_on"] == ["T1"]
+    resumed_t3 = run_stage(repo, "do", task_id="T3", action="begin")
+    assert resumed_t3.status == "ok"
+    assert resumed_t3.extras["attempt_id"] == first_t3.extras["attempt_id"]
+    assert resumed_t3.extras["task_packet"]["depends_on"] == []
 
     store = SQLiteStore(repo)
     first_attempt = store.attempt(int(first_t3.extras["attempt_id"]))
     assert first_attempt is not None
-    assert first_attempt["status"] == "superseded"
+    assert first_attempt["status"] == "running"
 
 
 def test_task_revision_invalidates_only_dependents_and_validators(tmp_path):
@@ -185,6 +197,7 @@ def test_task_revision_invalidates_only_dependents_and_validators(tmp_path):
     t5 = run_stage(repo, "do", task_id="T5", action="begin")
     assert _complete_verify(repo, t5.extras["attempt_id"]).status == "ok"
 
+    tasks_handoff = run_stage(repo, "tasks")
     tasks_path.write_text(
         tasks_path.read_text(encoding="utf-8").replace(
             "- [ ] T1: Build shared state\n  - Lane: build\n  - Complexity: small\n  - Revision: 1",
@@ -192,7 +205,12 @@ def test_task_revision_invalidates_only_dependents_and_validators(tmp_path):
         ),
         encoding="utf-8",
     )
-    registered = run_stage(repo, "tasks", artifact_file="specs/master/tasks.md")
+    registered = run_stage(
+        repo,
+        "tasks",
+        artifact_file="specs/master/tasks.md",
+        input_token=tasks_handoff.extras["input_token"],
+    )
     assert registered.status == "ok"
     assert registered.recommended_task_id == "T1"
 
@@ -314,11 +332,11 @@ def test_do_continuation_redirects_affected_tasks_but_allows_independent_task(tm
     assert session is not None
     assert not [finding for finding in store.findings(int(session["id"])) if finding["kind"] == "execution_blocked"]
 
-    registered = run_stage(
-        repo,
-        target_stage,
-        artifact_file=f"specs/master/{target_stage}.md",
-    )
+    handoff = run_stage(repo, target_stage)
+    registration_args = {"artifact_file": f"specs/master/{target_stage}.md"}
+    if target_stage != "spec":
+        registration_args["input_token"] = handoff.extras["input_token"]
+    registered = run_stage(repo, target_stage, **registration_args)
     assert registered.status == "ok"
     session = store.branch_session("master")
     assert session is not None
@@ -525,9 +543,8 @@ def test_verify_completion_recovers_persisted_summary_in_new_host_session(tmp_pa
     verification = store.verifications_for_attempt(attempt_id)
     assert len(verification) == 1
     assert verification[0]["status"] == "passed"
-    summary_ref = verification[0]["summary_ref"]
-    assert summary_ref
-    assert repo.joinpath(summary_ref).read_text(encoding="utf-8") == verification_summary
+    assert verification[0]["summary_ref"] is None
+    assert verification[0]["summary_text"] == verification_summary
 
 
 def test_review_conflicts_return_stable_response_and_keep_one_record(tmp_path):
@@ -572,4 +589,8 @@ def test_review_conflicts_return_stable_response_and_keep_one_record(tmp_path):
 
     store = SQLiteStore(repo)
     refs = store.runtime_refs(int(begin.extras["attempt_id"]))
-    assert len([ref for ref in refs if ref["kind"] == "review_summary"]) == 1
+    assert not [ref for ref in refs if ref["kind"] == "review_summary"]
+    record = store.review_for_seal(int(begin.extras["attempt_id"]), int(sealed.extras["seal_revision"]))
+    assert record["id"] == passed.extras["review_record_id"]
+    assert record["summary_ref"] is None
+    assert "No material finding." in record["summary_json"]

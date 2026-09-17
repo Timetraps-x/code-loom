@@ -5,6 +5,21 @@ from codeloom.persistence.sqlite import SQLiteStore
 from tests.helpers import init_repo, run_stage, write_project_config
 
 
+def _register_current_tasks(repo):
+    store = SQLiteStore(repo)
+    session = store.branch_session("master")
+    assert session is not None
+    snapshot = store.artifact_input_snapshot(int(session["id"]), "tasks")
+    response = run_stage(
+        repo,
+        "tasks",
+        artifact_file="specs/master/tasks.md",
+        input_token=store.artifact_input_token(snapshot),
+    )
+    assert response.status == "ok"
+    return response
+
+
 def test_failed_verify_lane_can_retry_same_task(tmp_path):
     repo = init_repo(tmp_path)
     run_stage(repo, "spec")
@@ -46,6 +61,7 @@ def test_changed_task_definition_creates_new_attempt_without_rewriting_old_attem
         "  - Lane: verify\n",
         encoding="utf-8",
     )
+    _register_current_tasks(repo)
     response = run_stage(repo, "do", task_id="T1")
 
     assert response.status == "ok"
@@ -68,6 +84,7 @@ def test_task_notes_change_does_not_create_new_attempt(tmp_path):
         tasks_path.read_text(encoding="utf-8").replace("- [ ] T2:", "  - Notes: expanded human context only\n\n- [ ] T2:", 1),
         encoding="utf-8",
     )
+    _register_current_tasks(repo)
     response = run_stage(repo, "do", task_id="T1")
 
     assert response.status == "ok"
@@ -95,6 +112,7 @@ def test_non_semantic_inline_context_change_does_not_create_new_attempt(tmp_path
         ),
         encoding="utf-8",
     )
+    _register_current_tasks(repo)
     response = run_stage(repo, "do", task_id="T1")
 
     assert response.status == "ok"
@@ -118,6 +136,7 @@ def test_task_notes_revision_metadata_does_not_create_new_attempt(tmp_path):
         + "\n\n## 6. Task Notes\n\n### T1: Implement current CodeLoom requirement\n\n- Revision: 9\n- Notes: human-only context\n",
         encoding="utf-8",
     )
+    _register_current_tasks(repo)
     response = run_stage(repo, "do", task_id="T1")
 
     assert response.status == "ok"
@@ -164,6 +183,7 @@ def test_removed_task_does_not_rewrite_old_attempt_when_other_task_runs(tmp_path
     assert original_tasks[0].task_id == "T1"
     tasks_path.write_text("# Tasks\n\n- [ ] T2: Verify current CodeLoom requirement\n", encoding="utf-8")
     write_project_config(repo, test_command="python --version")
+    _register_current_tasks(repo)
     response = run_stage(repo, "do")
 
     assert response.status == "ok"

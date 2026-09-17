@@ -25,11 +25,13 @@ specs/
 /story_mapping_reference.png
 /codeloom/quality_cases/adopt/
 /codeloom/quality_cases/do/
-/codeloom/quality_cases/plan/
 /codeloom/quality_cases/ship/
-/codeloom/quality_cases/spec/
 /codeloom/quality_cases/tasks/
+/codeloom/quality_cases/plan/
+/codeloom/quality_cases/spec/
 /codeloom/spec_evals/
 /tests/test_spec_artifact_evals.py
 /tests/test_spec_eval_cli.py
 /tests/test_spec_evals.py
+/tests/test_behavioral_evals.py
+/tests/test_stage_prompt_closure.py

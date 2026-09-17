@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,8 +22,9 @@ from codeloom.kernel.artifacts import (
     task_relation_errors,
 )
 from codeloom.kernel.attempts import attempt_status
+from codeloom.kernel.snapshots import capture_repository_snapshot, git_environment
 from codeloom.kernel.clients import create_llm_client, create_runtime_client
-from codeloom.kernel.drift import detect_plan_or_task_drift
+from codeloom.kernel.drift import derive_artifact_states, detect_plan_or_task_drift, earliest_artifact_repair
 from codeloom.kernel.resolver import ContractRevisionResolver
 from codeloom.kernel.verification import ShellVerifier
 from codeloom.persistence.sqlite import SQLiteStore
@@ -61,7 +61,7 @@ def _loom_command(command: str) -> str:
 
 def _artifact_drift_message(kind: str) -> str:
     return f"{kind}.md changed outside registered artifact revision"
-ARTIFACT_STAGE_MAIN_AGENTS = {
+ARTIFACT_STAGE_MAIN_ROLES = {
     "spec": "spec-analyzer",
     "plan": "plan-architect",
     "tasks": "task-planner",
@@ -101,11 +101,19 @@ class StageRunner:
 
     def run(self, request: KernelRequest) -> KernelResponse:
         command = _normalize_command(request.command)
+        action = str(request.args.get("action") or "").strip().lower()
         context = self._context(request)
+        if command == "do" and action == "unlock":
+            return self._run_do_unlock(context)
+        if command == "do" and (
+            action in {"complete", "seal-changes", "record-review", "route"}
+            or (action in {"", "begin"} and context.store.active_attempt(int(context.session["id"])) is not None)
+        ):
+            return self._run_do(context)
         redirected = self._continuation_redirect(context, command)
         if redirected is not None:
             return redirected
-        action = str(request.args.get("action") or "").strip().lower()
+        self._refresh_recommendation(context)
         if command != "do" and command in CONTINUATION_ROUTES and action == "route":
             return self._run_continuation_route(context, command)
         if command != "do" and command in CONTINUATION_ROUTES and action:
@@ -139,7 +147,7 @@ class StageRunner:
         slug = branch_slug(request.branch_name)
         store = SQLiteStore(request.cwd)
         session = store.get_or_create_branch_session(request.branch_name, slug, config.artifact_root)
-        context = StageContext(
+        return StageContext(
             request=request,
             config=config,
             branch_slug=slug,
@@ -148,20 +156,21 @@ class StageRunner:
             artifacts=MarkdownArtifactStore(request.cwd, config.artifact_root, slug),
             evidence=FileEvidenceStore(request.cwd, slug),
         )
-        self._sync_artifact_state(context)
+
+    def _refresh_recommendation(self, context: StageContext) -> NextRecommendation:
         recommendation = self._derive_recommendation(context)
         if (
             recommendation.command != context.session.get("recommended_next")
             or recommendation.task_id != context.session.get("recommended_task_id")
         ):
-            store.update_branch_session(
+            context.store.update_branch_session(
                 int(context.session["id"]),
                 recommended_next=recommendation.command,
                 recommended_task_id=recommendation.task_id,
             )
             context.session["recommended_next"] = recommendation.command
             context.session["recommended_task_id"] = recommendation.task_id
-        return context
+        return recommendation
 
     def _continuation_redirect(self, context: StageContext, command: str) -> KernelResponse | None:
         target = str(context.session.get("continuation_stage") or "")
@@ -294,114 +303,110 @@ class StageRunner:
         if context.latest_artifact_revisions is None:
             context.latest_artifact_revisions = context.store.latest_artifact_revisions(int(context.session["id"]))
         return context.latest_artifact_revisions
-    def _artifact_file_stage_kind(self, context: StageContext) -> str | None:
-        if not context.request.args.get("artifact_file"):
-            return None
-        command = _normalize_command(context.request.command)
-        if command in {"spec", "plan", "tasks"}:
-            return command
-        if command == "ship":
-            return "ship"
-        return None
+    def _artifact_states(self, context: StageContext, execution_hash: str | None = None) -> dict[str, dict[str, object]]:
+        task_error = None
+        tasks_content = self._artifact_text(context, "tasks")
+        if tasks_content is not None:
+            errors = _task_contract_errors(tasks_content)
+            if errors:
+                task_error = ", ".join(errors)
+            elif not self._current_tasks(context):
+                task_error = "tasks.md contains no parseable tasks"
+        return derive_artifact_states(
+            {kind: self._artifact_hash(context, kind) for kind in ("spec", "plan", "tasks", "ship")},
+            self._latest_artifact_revisions(context),
+            execution_hash,
+            task_error,
+        )
 
-    def _sync_artifact_state(self, context: StageContext) -> None:
-        session_id = int(context.session["id"])
-        updates: dict[str, str] = {}
-        skip_kind = self._artifact_file_stage_kind(context)
-
-        spec_hash = None if skip_kind == "spec" else self._sync_one_artifact(context, "spec", "active_spec_hash")
-        if spec_hash:
-            updates["active_spec_hash"] = spec_hash
-
-        current_spec_hash = updates.get("active_spec_hash") or context.session.get("active_spec_hash")
-        plan_hash = None
-        if skip_kind != "plan":
-            plan_hash = self._sync_one_artifact(
-                context,
-                "plan",
-                "active_plan_hash",
-                based_on_spec_hash=current_spec_hash,
-            )
-            if plan_hash:
-                updates["active_plan_hash"] = plan_hash
-
-        latest_plan = self._latest_artifact_revisions(context).get("plan")
-        tasks_hash = None
-        if skip_kind != "tasks":
-            tasks_hash = self._sync_one_artifact(
-                context,
-                "tasks",
-                "active_tasks_hash",
-                based_on_spec_hash=latest_plan["based_on_spec_hash"] if latest_plan else current_spec_hash,
-                based_on_plan_hash=updates.get("active_plan_hash") or context.session.get("active_plan_hash"),
-            )
-            if tasks_hash:
-                updates["active_tasks_hash"] = tasks_hash
-                self._record_task_snapshots(context, self._current_tasks(context), tasks_hash)
-
-        latest_tasks = self._latest_artifact_revisions(context).get("tasks")
-        ship_hash = None
-        if skip_kind != "ship":
-            ship_hash = self._sync_one_artifact(
-                context,
-                "ship",
-                "active_ship_hash",
-                based_on_spec_hash=latest_tasks["based_on_spec_hash"] if latest_tasks else current_spec_hash,
-                based_on_plan_hash=latest_tasks["based_on_plan_hash"] if latest_tasks else context.session.get("active_plan_hash"),
-                based_on_tasks_hash=updates.get("active_tasks_hash") or context.session.get("active_tasks_hash"),
-            )
-            if ship_hash:
-                updates["active_ship_hash"] = ship_hash
-
-        if updates:
-            context.store.update_branch_session(session_id, **updates)
-            context.session.update(updates)
-
-    def _sync_one_artifact(
+    def _stage_input(
         self,
         context: StageContext,
         kind: str,
-        active_field: str,
-        based_on_spec_hash: object | None = None,
-        based_on_plan_hash: object | None = None,
-        based_on_tasks_hash: object | None = None,
-    ) -> str | None:
-        content = self._artifact_text(context, kind)
-        if kind == "tasks" and content is not None and _task_contract_errors(content):
-            return None
-        content_hash = self._artifact_hash(context, kind)
-        previous_hash = context.session.get(active_field)
-        if content_hash is None or previous_hash == content_hash:
-            return None
-        path = context.artifacts.path_for(kind)
-        session_id = int(context.session["id"])
-        revision_id = context.store.record_artifact_revision(
-            session_id,
+        execution_hash: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        snapshot = context.store.artifact_input_snapshot(int(context.session["id"]), kind, execution_hash)
+        return snapshot, context.store.artifact_input_token(snapshot)
+
+    def _artifact_input_args(
+        self,
+        context: StageContext,
+        kind: str,
+        execution_hash: str | None = None,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        if kind == "spec":
+            return {}, {}
+        snapshot, token = self._stage_input(context, kind, execution_hash)
+        args = {"input_token": token}
+        if execution_hash is not None:
+            args["ship_input_hash"] = execution_hash
+        return args, {"input_snapshot": snapshot, "input_token": token}
+
+    def _register_artifact(
+        self,
+        context: StageContext,
+        kind: str,
+        path: Path,
+        content_hash: str,
+        expected_token: str | None = None,
+        execution_hash: str | None = None,
+    ) -> tuple[dict[str, Any] | None, KernelResponse | None]:
+        expected_token = expected_token or str(context.request.args.get("input_token") or "") or None
+        if kind != "spec" and expected_token is None and context.request.args.get("artifact_file"):
+            args, extras = self._artifact_input_args(context, kind, execution_hash)
+            artifact_path, handoff = self._artifact_handoff(context, kind, args, extras)
+            return None, KernelResponse(
+                status="failed",
+                message=f"{kind} registration requires the frozen input token from its handoff",
+                recommended_next=_loom_command("ship" if kind == "ship" else kind),
+                artifact_paths=[artifact_path],
+                errors=["missing_stage_input_token"],
+                extras=handoff,
+            )
+        if kind != "spec" and expected_token is None:
+            _, expected_token = self._stage_input(context, kind, execution_hash)
+        result = context.store.register_artifact_if_inputs_current(
+            int(context.session["id"]),
             kind,
             context.artifacts.relative(path),
             content_hash,
-            based_on_spec_hash=str(based_on_spec_hash) if based_on_spec_hash else None,
-            based_on_plan_hash=str(based_on_plan_hash) if based_on_plan_hash else None,
-            based_on_tasks_hash=str(based_on_tasks_hash) if based_on_tasks_hash else None,
+            expected_token,
+            execution_hash,
         )
-        if context.latest_artifact_revisions is not None:
-            context.latest_artifact_revisions[kind] = {
-                "id": revision_id,
-                "kind": kind,
-                "based_on_spec_hash": str(based_on_spec_hash) if based_on_spec_hash else None,
-                "based_on_plan_hash": str(based_on_plan_hash) if based_on_plan_hash else None,
-                "based_on_tasks_hash": str(based_on_tasks_hash) if based_on_tasks_hash else None,
-            }
-        if previous_hash:
-            context.store.add_finding(
-                session_id,
-                None,
-                "artifact_drift",
-                "warning",
-                _artifact_drift_message(kind),
-                None,
+        if result["status"] == "inputs_changed":
+            register_args = {"input_token": str(result["input_token"])}
+            if execution_hash is not None:
+                register_args["ship_input_hash"] = execution_hash
+            artifact_path, extras = self._artifact_handoff(
+                context,
+                kind,
+                register_args,
+                {"input_snapshot": result["input_snapshot"], "input_token": result["input_token"]},
             )
-        return content_hash
+            return None, KernelResponse(
+                status="noop",
+                message=f"{kind} inputs changed while the artifact was being authored; reauthor from the refreshed handoff",
+                recommended_next=_loom_command("ship" if kind == "ship" else kind),
+                artifact_paths=[artifact_path],
+                errors=[f"{kind}_inputs_changed"],
+                extras={
+                    **extras,
+                    "host_recovery": {"user_visible": False, "internal_action": f"reauthor_{kind}"},
+                },
+            )
+        context.latest_artifact_revisions = None
+        context.session[f"active_{kind}_hash"] = content_hash
+        context.session["active_stage"] = kind
+        if context.session.get("continuation_stage") == kind:
+            for field in (
+                "continuation_source_stage",
+                "continuation_stage",
+                "continuation_reason",
+                "continuation_attempt_id",
+                "continuation_task_id",
+            ):
+                context.session[field] = None
+        return result, None
 
     def _resolve_artifact_drift(self, context: StageContext, kind: str) -> None:
         context.store.resolve_open_findings(
@@ -450,34 +455,31 @@ class StageRunner:
         )
 
     def _derive_recommendation(self, context: StageContext) -> NextRecommendation:
-        if self._artifact_text(context, "spec") is None:
-            return NextRecommendation(_loom_command("spec"))
-        if self._artifact_text(context, "plan") is None:
-            return NextRecommendation(_loom_command("plan"))
+        active_attempt = context.store.active_attempt(int(context.session["id"]))
+        if active_attempt is not None:
+            task_id = str(active_attempt["task_id"])
+            return NextRecommendation(self._recommended_do(task_id), task_id)
 
         continuation = str(context.session.get("continuation_stage") or "")
         if continuation in CONTINUATION_ROUTES:
             return NextRecommendation(_loom_command(continuation))
 
-        tasks_content = self._artifact_text(context, "tasks")
-        if tasks_content is None or _task_contract_errors(tasks_content):
-            return NextRecommendation(_loom_command("tasks"))
+        states = self._artifact_states(context)
+        repair = earliest_artifact_repair(states, "tasks")
+        if repair is not None:
+            return NextRecommendation(repair)
 
-        tasks_hash = self._artifact_hash(context, "tasks")
-        if tasks_hash is None:
-            return NextRecommendation(_loom_command("tasks"))
         tasks = self._current_tasks(context)
-        if not tasks:
+        tasks_hash = self._artifact_hash(context, "tasks")
+        if not tasks or tasks_hash is None:
             return NextRecommendation(_loom_command("tasks"))
-
-        self._record_task_snapshots(context, tasks, tasks_hash)
         task = self._select_recommended_task(context, tasks)
         if task is not None:
             return NextRecommendation(self._recommended_do(task.task_id), task.task_id, task.title)
         ship_packet = self._build_ship_packet(context, tasks)
         ship_input_hash = self._ship_input_hash(ship_packet)
-        latest_ship = self._latest_artifact_revisions(context).get("ship")
-        if latest_ship and latest_ship.get("based_on_execution_hash") == ship_input_hash:
+        ship_states = self._artifact_states(context, ship_input_hash)
+        if ship_states["ship"]["state"] == "current":
             return NextRecommendation(None)
         return NextRecommendation(_loom_command("ship"))
 
@@ -549,7 +551,7 @@ class StageRunner:
         extras = {
             "handoff": "author_artifact",
             "stage": kind,
-            "main_agent": ARTIFACT_STAGE_MAIN_AGENTS[kind],
+            "main_role": ARTIFACT_STAGE_MAIN_ROLES[kind],
             "reviewer_agent": ARTIFACT_STAGE_REVIEWERS.get(kind),
             "artifact_path": artifact_path,
             "register_command": register_command,
@@ -718,36 +720,44 @@ class StageRunner:
             return error
         assert content is not None
         path, content_hash = context.artifacts.write("spec", content)
-        session_id = int(context.session["id"])
-        context.store.record_artifact_revision(session_id, "spec", context.artifacts.relative(path), content_hash)
+        _, registration_error = self._register_artifact(context, "spec", path, content_hash)
+        if registration_error is not None:
+            return registration_error
         self._resolve_artifact_drift(context, "spec")
         context.store.update_branch_session(
-            session_id,
-            active_stage="spec",
-            active_spec_hash=content_hash,
-            continuation_source_stage=None,
-            continuation_stage=None,
-            continuation_reason=None,
-            continuation_attempt_id=None,
-            continuation_task_id=None,
+            int(context.session["id"]),
             recommended_next=_loom_command("plan"),
             recommended_task_id=None,
         )
         return KernelResponse(
             status="ok",
-            message="spec.md generated",
+            message="spec.md registered",
             recommended_next=_loom_command("plan"),
             artifact_paths=[context.artifacts.relative(path)],
         )
 
     def _run_plan(self, context: StageContext) -> KernelResponse:
-        spec = context.artifacts.read("spec")
-        if spec is None:
-            return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
-        spec_hash = context.artifacts.hash_existing("spec")
-        handoff = self._host_artifact_handoff_response(context, "plan")
+        states = self._artifact_states(context)
+        repair = earliest_artifact_repair(states, "spec")
+        if repair is not None:
+            return KernelResponse(
+                status="noop",
+                message="plan authoring requires the current registered spec",
+                recommended_next=repair,
+                errors=["plan_input_not_authoritative"],
+                extras={"artifact_states": states},
+            )
+        spec = self._artifact_text(context, "spec") or ""
+        input_snapshot, input_token = self._stage_input(context, "plan")
+        handoff = self._host_artifact_handoff_response(
+            context,
+            "plan",
+            {"input_token": input_token},
+            {"input_snapshot": input_snapshot, "input_token": input_token},
+        )
         if handoff is not None:
             return handoff
+        spec_hash = str(self._latest_artifact_revisions(context)["spec"]["content_hash"])
         constraints = str(context.request.args.get("constraints") or context.request.args.get("revision_note") or "") or None
         content, error = self._artifact_content(
             context,
@@ -763,41 +773,51 @@ class StageRunner:
             return error
         assert content is not None
         path, content_hash = context.artifacts.write("plan", content)
-        session_id = int(context.session["id"])
-        context.store.record_artifact_revision(session_id, "plan", context.artifacts.relative(path), content_hash, based_on_spec_hash=spec_hash)
+        registration_token = (
+            str(context.request.args.get("input_token") or "")
+            if context.request.args.get("artifact_file")
+            else input_token
+        )
+        _, registration_error = self._register_artifact(
+            context, "plan", path, content_hash, expected_token=registration_token
+        )
+        if registration_error is not None:
+            return registration_error
         self._resolve_artifact_drift(context, "plan")
         context.store.update_branch_session(
-            session_id,
-            active_stage="plan",
-            active_spec_hash=spec_hash,
-            active_plan_hash=content_hash,
-            continuation_source_stage=None,
-            continuation_stage=None,
-            continuation_reason=None,
-            continuation_attempt_id=None,
-            continuation_task_id=None,
+            int(context.session["id"]),
             recommended_next=_loom_command("tasks"),
             recommended_task_id=None,
         )
         return KernelResponse(
             status="ok",
-            message="plan.md generated",
+            message="plan.md registered",
             recommended_next=_loom_command("tasks"),
             artifact_paths=[context.artifacts.relative(path)],
         )
 
     def _run_tasks(self, context: StageContext) -> KernelResponse:
-        spec = context.artifacts.read("spec")
-        plan = context.artifacts.read("plan")
-        if spec is None:
-            return KernelResponse(status="failed", message="spec.md is required", recommended_next=_loom_command("spec"), errors=["missing_spec"])
-        if plan is None:
-            return KernelResponse(status="failed", message="plan.md is required", recommended_next=_loom_command("plan"), errors=["missing_plan"])
-        handoff = self._host_artifact_handoff_response(context, "tasks")
+        states = self._artifact_states(context)
+        repair = earliest_artifact_repair(states, "plan")
+        if repair is not None:
+            return KernelResponse(
+                status="noop",
+                message="tasks authoring requires the current registered spec and plan",
+                recommended_next=repair,
+                errors=["tasks_input_not_authoritative"],
+                extras={"artifact_states": states},
+            )
+        spec = self._artifact_text(context, "spec") or ""
+        plan = self._artifact_text(context, "plan") or ""
+        input_snapshot, input_token = self._stage_input(context, "tasks")
+        handoff = self._host_artifact_handoff_response(
+            context,
+            "tasks",
+            {"input_token": input_token},
+            {"input_snapshot": input_snapshot, "input_token": input_token},
+        )
         if handoff is not None:
             return handoff
-        spec_hash = context.artifacts.hash_existing("spec")
-        plan_hash = context.artifacts.hash_existing("plan")
         preference = str(context.request.args.get("preference") or context.request.args.get("revision_note") or "") or None
         content, error = self._artifact_content(
             context,
@@ -807,14 +827,8 @@ class StageRunner:
         if error is not None:
             return error
         assert content is not None
-        session_id = int(context.session["id"])
         identity_errors = _task_contract_errors(content)
         if identity_errors:
-            context.store.update_branch_session(
-                session_id,
-                recommended_next=_loom_command("tasks"),
-                recommended_task_id=None,
-            )
             return KernelResponse(
                 status="failed",
                 message="tasks.md contains conflicting or unsupported execution identity metadata",
@@ -823,11 +837,6 @@ class StageRunner:
             )
         tasks = parse_tasks(content)
         if not tasks:
-            context.store.update_branch_session(
-                session_id,
-                recommended_next=_loom_command("tasks"),
-                recommended_task_id=None,
-            )
             return KernelResponse(
                 status="failed",
                 message="tasks.md artifact contains no parseable tasks",
@@ -836,79 +845,175 @@ class StageRunner:
             )
         path, tasks_hash = context.artifacts.write("tasks", content)
         self._cache_artifact(context, "tasks", content, tasks_hash)
-        context.store.record_artifact_revision(
-            session_id,
-            "tasks",
-            context.artifacts.relative(path),
-            tasks_hash,
-            based_on_spec_hash=spec_hash,
-            based_on_plan_hash=plan_hash,
+        registration_token = (
+            str(context.request.args.get("input_token") or "")
+            if context.request.args.get("artifact_file")
+            else input_token
         )
+        _, registration_error = self._register_artifact(
+            context, "tasks", path, tasks_hash, expected_token=registration_token
+        )
+        if registration_error is not None:
+            return registration_error
         self._record_task_snapshots(context, tasks, tasks_hash)
         self._resolve_artifact_drift(context, "tasks")
         recommendation = self._next_task_recommendation(context, tasks)
         context.store.update_branch_session(
-            session_id,
-            active_stage="tasks",
-            active_spec_hash=spec_hash,
-            active_plan_hash=plan_hash,
-            active_tasks_hash=tasks_hash,
-            continuation_source_stage=None,
-            continuation_stage=None,
-            continuation_reason=None,
-            continuation_attempt_id=None,
-            continuation_task_id=None,
+            int(context.session["id"]),
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
         )
         return KernelResponse(
             status="ok",
-            message="tasks.md generated",
+            message="tasks.md registered",
             recommended_next=recommendation.command,
             recommended_task_id=recommendation.task_id,
             recommended_task_title=recommendation.task_title,
             artifact_paths=[context.artifacts.relative(path)],
         )
 
-    def _run_do(self, context: StageContext) -> KernelResponse:
-        session_id = int(context.session["id"])
-        tasks_content = self._artifact_text(context, "tasks")
-        if tasks_content is None:
-            return KernelResponse(status="failed", message="tasks.md is required", recommended_next=_loom_command("tasks"), errors=["missing_tasks"])
-        identity_errors = _task_contract_errors(tasks_content)
-        if identity_errors:
-            context.store.update_branch_session(
-                session_id,
-                recommended_next=_loom_command("tasks"),
-                recommended_task_id=None,
-            )
+    def _unlock_command(self, context: StageContext, attempt_id: int) -> str:
+        return (
+            f"loom stage do --branch {context.request.branch_name} "
+            f"--arg action=unlock --arg attempt_id={attempt_id}"
+        )
+
+    def _run_do_unlock(self, context: StageContext) -> KernelResponse:
+        attempt_value = context.request.args.get("attempt_id")
+        completed_status = str(context.request.args.get("status") or "").strip().lower() or None
+        if completed_status is not None and completed_status not in {"implemented", "verified"}:
             return KernelResponse(
                 status="failed",
-                message="tasks.md execution identity must be corrected before Do",
-                recommended_next=_loom_command("tasks"),
-                errors=identity_errors,
+                message="unlock status must be implemented or verified",
+                recommended_next=_loom_command("do"),
+                errors=["invalid_unlock_status"],
             )
+        if completed_status is not None and attempt_value is None:
+            return KernelResponse(
+                status="failed",
+                message="attempt_id is required when manually completing an unlocked attempt",
+                recommended_next=_loom_command("do"),
+                errors=["missing_attempt_id"],
+            )
+        try:
+            attempt_id = int(str(attempt_value)) if attempt_value is not None else None
+        except ValueError:
+            return KernelResponse(
+                status="failed",
+                message=f"invalid attempt_id: {attempt_value}",
+                recommended_next=_loom_command("do"),
+                errors=["invalid_attempt_id"],
+            )
+        result = context.store.unlock_do_attempt(
+            int(context.session["id"]),
+            attempt_id,
+            completed_status,
+            str(context.request.args.get("summary") or "").strip() or None,
+        )
+        outcome = str(result["result"])
+        status = {
+            "completed": "ok",
+            "unlocked": "ok",
+            "already_inactive": "noop",
+            "not_found": "failed",
+            "session_mismatch": "failed",
+        }[outcome]
+        messages = {
+            "completed": f"Do attempt manually recorded as {completed_status} by explicit user action",
+            "unlocked": "Do mechanical block released; no completion was asserted",
+            "already_inactive": "Do attempt is already inactive and has no matching continuation",
+            "not_found": "no Do attempt is available to unlock",
+            "session_mismatch": "attempt does not belong to this branch session",
+        }
+        errors = [] if outcome in {"completed", "unlocked", "already_inactive"} else [f"unlock_{outcome}"]
+        recommendation = NextRecommendation(_loom_command("do"))
+        if outcome == "completed":
+            refreshed_session = context.store.branch_session(context.request.branch_name)
+            if refreshed_session is not None:
+                context.session = refreshed_session
+            recommendation = self._refresh_recommendation(context)
+        return KernelResponse(
+            status=status,
+            message=messages[outcome],
+            recommended_next=recommendation.command,
+            recommended_task_id=recommendation.task_id,
+            recommended_task_title=recommendation.task_title,
+            errors=errors,
+            extras={"unlock_result": outcome, **{key: value for key, value in result.items() if key != "result"}},
+        )
 
-        spec_hash = self._artifact_hash(context, "spec")
-        plan_hash = self._artifact_hash(context, "plan")
-        tasks_hash = self._artifact_hash(context, "tasks")
-        if tasks_hash is None:
-            return KernelResponse(status="failed", message="tasks.md is empty", recommended_next=_loom_command("tasks"), errors=["missing_tasks_hash"])
+    def _load_attempt_task(
+        self,
+        context: StageContext,
+        attempt: dict[str, Any],
+    ) -> tuple[TaskDefinition | None, KernelResponse | None]:
+        attempt_id = int(attempt["id"])
+        packet_ref = str(attempt.get("task_packet_ref") or "")
+        try:
+            content = attempt.get("task_packet_json")
+            if content is None:
+                if not packet_ref:
+                    raise ValueError("task packet is missing")
+                resolved = (context.request.cwd / packet_ref).resolve()
+                if not resolved.is_relative_to(context.evidence.root.resolve()):
+                    raise ValueError("task packet is outside the evidence root")
+                content = resolved.read_text(encoding="utf-8")
+            packet = TaskPacket.from_canonical_json(content)
+            if packet.content_hash != attempt.get("task_packet_hash"):
+                raise ValueError("task packet hash does not match the attempt")
+            if packet.version != str(attempt.get("task_packet_version") or ""):
+                raise ValueError("task packet version does not match the attempt")
+            if packet.task_id != str(attempt.get("task_id")) or packet.task_fingerprint != attempt.get("task_fingerprint"):
+                raise ValueError("task packet identity does not match the attempt")
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            return None, KernelResponse(
+                status="blocked",
+                message=f"frozen Task Packet is unavailable for attempt {attempt_id}: {exc}",
+                recommended_next=self._recommended_do(str(attempt.get("task_id") or "")),
+                recommended_task_id=str(attempt.get("task_id") or "") or None,
+                errors=["task_packet_integrity_error"],
+                extras={
+                    "attempt_id": attempt_id,
+                    "unlock_command": self._unlock_command(context, attempt_id),
+                },
+            )
+        return TaskDefinition(
+            task_id=packet.task_id,
+            title=packet.title,
+            raw=packet.raw,
+            fingerprint=packet.task_fingerprint,
+            lane=packet.lane,
+            complexity=packet.complexity,
+            revision=packet.revision,
+            depends_on=packet.depends_on,
+            validates=packet.validates,
+            covered_by=packet.covered_by,
+            relations_declared=bool(packet.depends_on or packet.validates or packet.covered_by),
+        ), None
 
-        tasks = self._current_tasks(context)
-        if not tasks:
-            return KernelResponse(status="failed", message="no tasks found", recommended_next=_loom_command("tasks"), errors=["no_tasks"])
-        self._record_task_snapshots(context, tasks, tasks_hash)
+    def _recovery_tasks(
+        self,
+        context: StageContext,
+        attempt: dict[str, Any],
+        frozen_task: TaskDefinition,
+    ) -> list[TaskDefinition]:
+        states = self._artifact_states(context)
+        if (
+            states["tasks"]["state"] == "current"
+            and states["tasks"]["registered_hash"] == attempt.get("based_on_tasks_hash")
+        ):
+            tasks = self._current_tasks(context)
+            if any(
+                task.task_id == frozen_task.task_id and task.fingerprint == frozen_task.fingerprint
+                for task in tasks
+            ):
+                return tasks
+        return [frozen_task]
 
+
+    def _run_do(self, context: StageContext) -> KernelResponse:
+        session_id = int(context.session["id"])
         action = str(context.request.args.get("action") or "").strip().lower()
-        if action == "complete":
-            return self._run_do_complete(context, tasks, session_id)
-        if action == "seal-changes":
-            return self._run_do_seal_changes(context, tasks, session_id)
-        if action == "record-review":
-            return self._run_do_record_review(context, tasks, session_id)
-        if action == "route":
-            return self._run_do_route(context, tasks, session_id)
         if action == "review-context":
             return KernelResponse(
                 status="failed",
@@ -916,72 +1021,121 @@ class StageRunner:
                 recommended_next=_loom_command("do"),
                 errors=["legacy_do_action_not_supported"],
             )
-        if action not in {"", "begin", "retry"}:
+        if action not in {"", "begin", "retry", "complete", "seal-changes", "record-review", "route"}:
             return KernelResponse(status="failed", message=f"unsupported do action: {action}", recommended_next=_loom_command("do"), errors=["unsupported_do_action"])
 
         requested_task_id = str(context.request.args.get("task_id") or "").strip() or None
+        attempt: dict[str, Any] | None = None
+        attempt_value = context.request.args.get("attempt_id")
+        if action in {"complete", "seal-changes", "record-review", "route"}:
+            if attempt_value is None:
+                return KernelResponse(
+                    status="failed",
+                    message=f"attempt_id is required for do {action}",
+                    recommended_next=_loom_command("do"),
+                    errors=["missing_attempt_id"],
+                )
+            try:
+                attempt_id = int(str(attempt_value))
+            except ValueError:
+                return KernelResponse(
+                    status="failed",
+                    message="attempt_id must be an integer",
+                    recommended_next=_loom_command("do"),
+                    errors=["invalid_attempt_id"],
+                )
+            attempt = context.store.attempt(attempt_id)
+            if attempt is None:
+                return KernelResponse(
+                    status="failed",
+                    message=f"attempt {attempt_id} was not found",
+                    recommended_next=_loom_command("do"),
+                    errors=["attempt_not_found"],
+                )
         active_attempt = context.store.active_attempt(session_id)
-        if active_attempt is not None:
-            active_task = next((item for item in tasks if item.task_id == active_attempt.get("task_id")), None)
-            active_inputs_match = bool(
-                active_task
-                and (
-                    active_attempt.get("input_attempts_json") is None
-                    or active_attempt.get("input_attempts_json") == self._input_attempts_json(context, tasks, active_task)
+        if attempt is not None and action in {"complete", "seal-changes", "record-review", "route"}:
+            if int(attempt["branch_session_id"]) != session_id:
+                return KernelResponse(status="failed", message="attempt does not belong to this branch session", recommended_next=_loom_command("do"), errors=["attempt_session_mismatch"])
+            frozen_task, packet_error = self._load_attempt_task(context, attempt)
+            if packet_error is not None:
+                return packet_error
+            assert frozen_task is not None
+            frozen_tasks = self._recovery_tasks(context, attempt, frozen_task)
+            if action == "complete":
+                return self._run_do_complete(context, frozen_tasks, session_id)
+            if action == "seal-changes":
+                return self._run_do_seal_changes(context, frozen_tasks, session_id)
+            if action == "record-review":
+                return self._run_do_record_review(context, frozen_tasks, session_id)
+            return self._run_do_route(context, frozen_tasks, session_id)
+
+        if active_attempt is not None and action in {"", "begin"}:
+            active_task, packet_error = self._load_attempt_task(context, active_attempt)
+            if packet_error is not None:
+                return packet_error
+            assert active_task is not None
+            if requested_task_id and requested_task_id != active_task.task_id:
+                return KernelResponse(
+                    status="blocked",
+                    message=f"attempt {active_attempt['id']} for {active_task.task_id} must finish before {requested_task_id}",
+                    recommended_next=self._recommended_do(active_task.task_id),
+                    recommended_task_id=active_task.task_id,
+                    recommended_task_title=active_task.title,
+                    extras={"active_attempt_id": int(active_attempt["id"]), "requested_task_id": requested_task_id},
+                    errors=["active_attempt_exists"],
                 )
-            )
-            if active_task is not None and active_attempt.get("task_fingerprint") == active_task.fingerprint and active_inputs_match:
-                if requested_task_id and requested_task_id != active_task.task_id:
-                    return KernelResponse(
-                        status="blocked",
-                        message=f"attempt {active_attempt['id']} for {active_task.task_id} must finish before {requested_task_id}",
-                        recommended_next=self._recommended_do(active_task.task_id),
-                        recommended_task_id=active_task.task_id,
-                        recommended_task_title=active_task.title,
-                        extras={"active_attempt_id": int(active_attempt["id"]), "requested_task_id": requested_task_id},
-                        errors=["active_attempt_exists"],
-                    )
-                if active_attempt.get("status") == "completing":
-                    candidate_ref = active_attempt.get("completion_candidate_ref")
-                    host_recovery = (
-                        {
+            if active_attempt.get("status") == "completing":
+                candidate_ref = active_attempt.get("completion_candidate_ref")
+                return KernelResponse(
+                    status="ok",
+                    message="do attempt completion is ready to resume",
+                    recommended_next=self._recommended_do(active_task.task_id),
+                    recommended_task_id=active_task.task_id,
+                    recommended_task_title=active_task.title,
+                    extras={
+                        "attempt_id": int(active_attempt["id"]),
+                        "task_id": active_task.task_id,
+                        "status": "completing",
+                        "completion_token": active_attempt.get("completion_token"),
+                        "completion_status": active_attempt.get("completion_status"),
+                        "completion_summary": active_attempt.get("completion_summary"),
+                        "completion_candidate_ref": candidate_ref,
+                        "completion_candidate_hash": active_attempt.get("completion_candidate_hash"),
+                        "host_recovery": {
                             "user_visible": False,
-                            "internal_action": "resume_complete",
+                            "internal_action": "resume_complete" if active_attempt.get("completion_candidate_json") is not None or candidate_ref else "resubmit_completion_candidate",
                             "command_args": {"action": "complete", "attempt_id": int(active_attempt["id"])},
-                        }
-                        if candidate_ref
-                        else {
-                            "user_visible": False,
-                            "internal_action": "resubmit_completion_candidate",
-                            "requires": "original_completion_candidate",
-                        }
-                    )
-                    return KernelResponse(
-                        status="ok",
-                        message="do attempt completion is ready to resume",
-                        recommended_next=self._recommended_do(active_task.task_id),
-                        recommended_task_id=active_task.task_id,
-                        recommended_task_title=active_task.title,
-                        extras={
-                            "attempt_id": int(active_attempt["id"]),
-                            "task_id": active_task.task_id,
-                            "status": "completing",
-                            "completion_token": active_attempt.get("completion_token"),
-                            "completion_status": active_attempt.get("completion_status"),
-                            "completion_summary": active_attempt.get("completion_summary"),
-                            "completion_candidate_ref": candidate_ref,
-                            "completion_candidate_hash": active_attempt.get("completion_candidate_hash"),
-                            "host_recovery": host_recovery,
                         },
-                    )
-                return self._do_begin_response(
-                    context,
-                    active_task,
-                    int(active_attempt["id"]),
-                    int(active_attempt["attempt_no"]),
-                    active_attempt,
-                    resumed=True,
+                    },
                 )
+            return self._do_begin_response(
+                context,
+                active_task,
+                int(active_attempt["id"]),
+                int(active_attempt["attempt_no"]),
+                active_attempt,
+                resumed=True,
+            )
+
+        states = self._artifact_states(context)
+        repair = earliest_artifact_repair(states, "tasks")
+        if repair is not None:
+            return KernelResponse(
+                status="noop",
+                message="new Do attempt requires current registered Spec, Plan, and Tasks inputs",
+                recommended_next=repair,
+                errors=["do_inputs_not_authoritative"],
+                extras={"artifact_states": states, "blocked_new_attempt": True},
+            )
+        tasks_content = self._artifact_text(context, "tasks") or ""
+        tasks = self._current_tasks(context)
+        tasks_hash = self._artifact_hash(context, "tasks")
+        if not tasks or tasks_hash is None:
+            return KernelResponse(status="failed", message="no tasks found", recommended_next=_loom_command("tasks"), errors=["no_tasks"])
+        self._record_task_snapshots(context, tasks, tasks_hash)
+        revisions = self._latest_artifact_revisions(context)
+        spec_hash = str(revisions["spec"]["content_hash"])
+        plan_hash = str(revisions["plan"]["content_hash"])
 
         task = self._select_task(context, tasks)
         if task is None:
@@ -1033,7 +1187,12 @@ class StageRunner:
             if retry_error is not None:
                 return retry_error
         if action in {"begin", "retry"}:
-            snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+            if context.config.git_repositories_error:
+                snapshot = {"errors": [context.config.git_repositories_error]}
+            elif context.config.git_repositories is not None:
+                snapshot = capture_repository_snapshot(context.request.cwd, context.config.git_repositories)
+            else:
+                snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
             if snapshot.get("errors"):
                 return KernelResponse(
                     status="blocked",
@@ -1082,7 +1241,7 @@ class StageRunner:
                 message="claude-code host runtime requires do action=begin and action=complete",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                extras={"task_id": task.task_id, "lane": task.lane, "complexity": task.complexity, "main_agent": _do_main_agent(task.lane)},
+                extras={"task_id": task.task_id, "lane": task.lane, "complexity": task.complexity, "main_role": _do_main_role(task.lane)},
                 errors=["host_runtime_requires_begin_complete"],
             )
 
@@ -1165,14 +1324,6 @@ class StageRunner:
     ) -> KernelResponse:
         packet = TaskPacket.from_task(task)
         packet_ref = str((attempt or {}).get("task_packet_ref") or "")
-        if packet_ref:
-            try:
-                path = Path(packet_ref)
-                if not path.is_absolute():
-                    path = context.request.cwd / path
-                packet = TaskPacket.from_canonical_json(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                packet_ref = ""
         packet_hash = str((attempt or {}).get("task_packet_hash") or packet.content_hash)
         packet_version = str((attempt or {}).get("task_packet_version") or packet.version)
         extras: dict[str, Any] = {
@@ -1182,7 +1333,7 @@ class StageRunner:
             "task_title": task.title,
             "lane": task.lane,
             "complexity": task.complexity,
-            "main_agent": _do_main_agent(task.lane),
+            "main_role": _do_main_role(task.lane),
             "reviewer_agent": "code-reviewer" if task.lane == "build" else None,
             "task_definition": task.raw,
             "task_packet": packet.payload(),
@@ -1192,17 +1343,14 @@ class StageRunner:
             "resumed": resumed,
             "constitution": self._constitution_projection(context),
             "project_profile": self._project_profile(context),
-            "lineage_advisories": self._lineage_advisories(
-                context,
-                self._artifact_hash(context, "spec"),
-                self._artifact_hash(context, "plan"),
-            ),
+            "lineage_advisories": [],
         }
         if task.lane == "build":
+            extras["sealed_evidence"] = self._sealed_evidence(context, attempt_id)
             extras["host_internal_flow"] = {
                 "user_visible": False,
-                "sequence": ["run_main_agent", "seal_changes", "run_reviewer_agent", "record_review", "complete_attempt"],
-                "after_main_agent": {
+                "sequence": ["run_main_role", "seal_changes", "run_reviewer_agent", "record_review", "complete_attempt"],
+                "after_main_role": {
                     "internal_action": "seal_changes",
                     "command_args": {"action": "seal-changes", "attempt_id": attempt_id},
                     "before_reviewer_agent": "code-reviewer",
@@ -1217,6 +1365,71 @@ class StageRunner:
             recommended_task_id=task.task_id,
             extras=extras,
         )
+
+    def _sealed_evidence(self, context: StageContext, attempt_id: int) -> list[dict[str, Any]]:
+        attempt = context.store.attempt(attempt_id) or {}
+        seals = context.store.sealed_changes_for_attempt(attempt_id)
+        revisions = {row["seal_revision"] for row in seals}
+        legacy_refs = [ref for ref in context.store.runtime_refs(attempt_id) if ref["kind"] == "attempt_changes"]
+        latest_ref = attempt.get("latest_sealed_changes_ref")
+        if latest_ref and not any(ref["path"] == latest_ref for ref in legacy_refs):
+            legacy_refs.append({"path": latest_ref, "content_hash": None})
+        errors: list[dict[str, Any]] = []
+        for ref in legacy_refs:
+            if ref["path"] == latest_ref and attempt.get("latest_seal_revision") in revisions:
+                continue
+            try:
+                path = (context.request.cwd / ref["path"]).resolve()
+                if not path.is_relative_to(context.evidence.root.resolve()):
+                    raise ValueError("sealed changes outside evidence root")
+                content = path.read_bytes().decode("utf-8")
+                if hashlib.sha256(content.encode("utf-8")).hexdigest() != ref["content_hash"]:
+                    raise ValueError("sealed changes hash mismatch")
+                manifest = json.loads(content)
+                revision = int(manifest["seal_revision"])
+                if revision not in revisions:
+                    seals.append({"attempt_id": attempt_id, "seal_revision": revision,
+                                  "sealed_tree": manifest["diff_source"]["sealed_tree"],
+                                  "manifest_json": content, "content_hash": ref["content_hash"]})
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                current = ref["path"] == latest_ref and attempt.get("latest_seal_revision") not in revisions
+                errors.append({"attempt_id": attempt_id, "seal_revision": attempt.get("latest_seal_revision", 0) if current else 0,
+                               "source_ref": ref["path"], "optional_history": not current, "integrity_error": str(exc)})
+        result = []
+        for seal in sorted(seals, key=lambda item: item["seal_revision"])[-2:]:
+            seal = dict(seal)
+            reading_review = False
+            try:
+                if hashlib.sha256(seal["manifest_json"].encode("utf-8")).hexdigest() != seal["content_hash"]:
+                    raise ValueError("sealed changes hash mismatch")
+                manifest = json.loads(seal["manifest_json"])
+                if (manifest["task_id"] != attempt.get("task_id")
+                        or manifest["attempt_no"] != attempt.get("attempt_no")
+                        or manifest["seal_revision"] != seal["seal_revision"]
+                        or manifest["diff_source"]["start_tree"] != attempt.get("start_tree")
+                        or manifest["diff_source"]["sealed_tree"] != seal["sealed_tree"]
+                        or (seal["seal_revision"] == attempt.get("latest_seal_revision")
+                            and seal["sealed_tree"] != attempt.get("latest_sealed_tree"))):
+                    raise ValueError("sealed changes identity mismatch")
+                review = context.store.review_for_seal(attempt_id, int(seal["seal_revision"]))
+                if review is not None:
+                    reading_review = True
+                    review_content = review.get("summary_json")
+                    if review_content is None:
+                        path = (context.request.cwd / str(review.get("summary_ref") or "")).resolve()
+                        if not path.is_relative_to(context.evidence.root.resolve()):
+                            raise ValueError("review summary outside evidence root")
+                        review_content = path.read_bytes().decode("utf-8")
+                    if hashlib.sha256(review_content.encode("utf-8")).hexdigest() != review["summary_hash"]:
+                        raise ValueError("review summary hash mismatch")
+                    review["summary_json"] = review_content
+                seal["review"] = review
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                seal.pop("manifest_json", None)
+                seal["integrity_error"] = f"review evidence: {exc}" if reading_review else str(exc)
+            result.append(seal)
+        return result + errors
+
 
     def _start_attempt(
         self,
@@ -1248,21 +1461,14 @@ class StageRunner:
             str(snapshot.get("snapshot_semantics") or ""),
             json.dumps(snapshot.get("status_summary") or {}, ensure_ascii=False, sort_keys=True),
             packet.content_hash,
+            None,
             packet.version,
             current_task_inputs[task.task_id],
+            packet.canonical_json(),
+            snapshot_repositories_json=(
+                json.dumps(snapshot["repositories"], sort_keys=True) if "repositories" in snapshot else None
+            ),
         )
-        if created or not attempt.get("task_packet_ref"):
-            active_task = next(item for item in tasks if item.task_id == attempt["task_id"])
-            active_packet = TaskPacket.from_task(active_task)
-            packet_ref = context.evidence.write_attempt_file(
-                active_task.task_id,
-                int(attempt["attempt_no"]),
-                "task-packet.json",
-                active_packet.canonical_json(),
-            )
-            context.store.attach_task_packet(int(attempt["id"]), packet_ref)
-            context.store.replace_runtime_ref(int(attempt["id"]), "task_packet", packet_ref, active_packet.content_hash)
-            attempt = context.store.attempt(int(attempt["id"])) or attempt
         self._invalidate_latest_attempts(context)
         return attempt, created
 
@@ -1418,7 +1624,7 @@ class StageRunner:
         if attempt.get("task_fingerprint") != task.fingerprint:
             return KernelResponse(status="failed", message=f"task definition changed during attempt: {task.task_id}", recommended_next=self._recommended_do(task.task_id), recommended_task_id=task.task_id, errors=["task_changed_during_attempt"])
 
-        snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+        snapshot = _capture_attempt_snapshot(context.request.cwd, attempt)
         if snapshot.get("errors"):
             return KernelResponse(
                 status="blocked",
@@ -1429,30 +1635,27 @@ class StageRunner:
                 errors=list(snapshot["errors"]),
             )
         sealed_tree = str(snapshot.get("tree") or "")
+        try:
+            changes = _build_attempt_changes(
+                context.request.cwd, task, attempt, start_tree, sealed_tree, 0, snapshot,
+            )
+        except ValueError as exc:
+            return KernelResponse(
+                status="blocked", message="attempt diff could not be generated",
+                recommended_next=self._recommended_do(task.task_id),
+                errors=["sealed_diff_generation_failed"], extras={"detail": str(exc)},
+            )
         recorded_revision, seal_created = context.store.record_sealed_changes(attempt_id, sealed_tree)
-        changes = _build_attempt_changes(
-            context.request.cwd,
-            task,
-            attempt,
-            start_tree,
-            sealed_tree,
-            recorded_revision,
-            snapshot,
-        )
+        changes["seal_revision"] = recorded_revision
         content = json.dumps(changes, ensure_ascii=False, indent=2, sort_keys=True)
-        changes_ref = context.evidence.write_attempt_file(
-            task.task_id,
-            int(attempt["attempt_no"]),
-            f"attempt-changes-r{recorded_revision}-{sealed_tree[:12]}.json",
-            content,
-        )
-        content_hash = _content_hash(context.request.cwd / changes_ref)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         if not context.store.attach_sealed_changes(
             attempt_id,
             recorded_revision,
             sealed_tree,
-            changes_ref,
+            None,
             content_hash,
+            content,
         ):
             return KernelResponse(
                 status="blocked",
@@ -1478,15 +1681,19 @@ class StageRunner:
                 "sealed_tree": sealed_tree,
                 "seal_revision": recorded_revision,
                 "seal_reused": not seal_created,
-                "sealed_changes_ref": changes_ref,
+                "prior_sealed_evidence": [seal for seal in self._sealed_evidence(context, attempt_id) if seal["seal_revision"] != recorded_revision],
+                "sealed_changes": changes,
+                "sealed_changes_hash": content_hash,
                 "sealed_diff_command": sealed_diff_command,
+                "sealed_diff_cwd": str(context.request.cwd.resolve()),
                 "reviewer_handoff": {
                     "user_visible": False,
                     "agent": "code-reviewer",
                     "review_scope": "attempt_scoped",
                     "seal_revision": recorded_revision,
-                    "sealed_changes_ref": changes_ref,
+                    "changes_source": "extras.sealed_changes",
                     "sealed_diff_command": sealed_diff_command,
+                    "sealed_diff_cwd": str(context.request.cwd.resolve()),
                     "do_not_review_full_worktree": True,
                 },
             },
@@ -1556,22 +1763,16 @@ class StageRunner:
         summary, summary_error = self._review_summary_content(context, task, status, seal_revision)
         if summary_error is not None:
             return summary_error
-        summary_identity = hashlib.sha256(summary.encode("utf-8")).hexdigest()
-        summary_ref = context.evidence.write_attempt_file(
-            task.task_id,
-            int(attempt["attempt_no"]),
-            f"review-r{seal_revision}-{summary_identity[:12]}.json",
-            summary,
-        )
-        summary_hash = _content_hash(context.request.cwd / summary_ref)
+        summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
         try:
             review_record_id = context.store.record_review(
                 attempt_id,
                 seal_revision,
                 sealed_tree,
                 status,
-                summary_ref,
+                None,
                 summary_hash,
+                summary,
             )
         except ValueError as exc:
             if str(exc) != "review_already_recorded":
@@ -1584,7 +1785,7 @@ class StageRunner:
                 errors=["review_already_recorded"],
             )
         recorded_review = context.store.review_for_seal(attempt_id, seal_revision)
-        authoritative_summary_ref = str((recorded_review or {}).get("summary_ref") or summary_ref)
+        authoritative_summary_ref = (recorded_review or {}).get("summary_ref")
         return KernelResponse(
             status="ok",
             message="attempt review recorded",
@@ -1637,6 +1838,16 @@ class StageRunner:
                     extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
                     errors=["seal_revision_mismatch"],
                 )
+        seal = next((item for item in self._sealed_evidence(context, attempt_id) if item["seal_revision"] == latest_revision), None)
+        if seal is None or seal.get("integrity_error"):
+            return KernelResponse(
+                status="blocked", message="sealed evidence is unavailable or corrupt",
+                recommended_next=self._recommended_do(task.task_id), recommended_task_id=task.task_id,
+                extras=({"unlock_command": self._unlock_command(context, attempt_id)}
+                        if seal and str(seal.get("integrity_error", "")).startswith("review")
+                        else {"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)}),
+                errors=["sealed_evidence_integrity_error"],
+            )
         review = context.store.review_for_seal(attempt_id, latest_revision)
         if review is None:
             return KernelResponse(
@@ -1664,7 +1875,7 @@ class StageRunner:
                 extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
                 errors=["review_record_mismatch"],
             )
-        snapshot = _capture_working_tree_content_snapshot(context.request.cwd)
+        snapshot = _capture_attempt_snapshot(context.request.cwd, attempt)
         if snapshot.get("errors"):
             extras = dict(snapshot)
             extras["host_recovery"] = self._seal_changes_recovery(attempt_id, rerun_reviewer=True)
@@ -1704,34 +1915,54 @@ class StageRunner:
         context: StageContext,
         attempt: dict[str, Any],
     ) -> tuple[dict[str, str] | None, str | None]:
-        candidate_ref = str(attempt.get("completion_candidate_ref") or "")
+        content = attempt.get("completion_candidate_json")
         candidate_hash = str(attempt.get("completion_candidate_hash") or "")
-        if not candidate_ref or not candidate_hash:
+        if not candidate_hash:
             return None, "completion_candidate_missing"
-        candidate_path = (context.request.cwd / candidate_ref).resolve()
+        if content is None:
+            candidate_ref = str(attempt.get("completion_candidate_ref") or "")
+            if not candidate_ref:
+                return None, "completion_candidate_missing"
+            candidate_path = (context.request.cwd / candidate_ref).resolve()
+            if not candidate_path.is_relative_to(context.evidence.root.resolve()):
+                return None, "completion_candidate_invalid_path"
+            try:
+                content = candidate_path.read_text(encoding="utf-8")
+            except OSError:
+                return None, "completion_candidate_unreadable"
         try:
-            candidate_path.relative_to(context.evidence.root.resolve())
-        except ValueError:
-            return None, "completion_candidate_invalid_path"
-        try:
-            content = candidate_path.read_text(encoding="utf-8")
             candidate = json.loads(content)
-        except (OSError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError):
             return None, "completion_candidate_unreadable"
         fields = {"status", "summary", "stdout", "stderr", "verification_summary"}
+        if isinstance(candidate, dict) and candidate.get("version") == "2":
+            fields |= {"version", "stdout_hash", "stderr_hash"}
         if not isinstance(candidate, dict) or set(candidate) != fields:
             return None, "completion_candidate_invalid"
         if any(not isinstance(candidate[field], str) for field in fields):
             return None, "completion_candidate_invalid"
-        actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         canonical = json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        canonical_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if (
-            actual_hash != candidate_hash
-            or canonical_hash != candidate_hash
+            hashlib.sha256(content.encode("utf-8")).hexdigest() != candidate_hash
+            or hashlib.sha256(canonical.encode("utf-8")).hexdigest() != candidate_hash
             or attempt.get("completion_token") != candidate_hash
         ):
             return None, "completion_candidate_hash_mismatch"
+        if candidate.get("version") == "2":
+            for kind in ("stdout", "stderr"):
+                ref = candidate[kind]
+                if not ref:
+                    if candidate[f"{kind}_hash"]:
+                        return None, "completion_candidate_invalid"
+                    continue
+                path = (context.request.cwd / ref).resolve()
+                if not path.is_relative_to(context.evidence.root.resolve()):
+                    return None, "completion_log_invalid_path"
+                try:
+                    if _content_hash(path) != candidate[f"{kind}_hash"]:
+                        return None, "completion_log_hash_mismatch"
+                except OSError:
+                    return None, "completion_log_unreadable"
         return candidate, None
 
     def _run_do_complete(self, context: StageContext, tasks: list[TaskDefinition], session_id: int) -> KernelResponse:
@@ -1759,15 +1990,36 @@ class StageRunner:
                 recommended_task_id=task.task_id,
                 errors=["task_changed_during_attempt"],
             )
-        current_inputs = self._input_attempts_json(context, tasks, task)
-        if attempt.get("input_attempts_json") is not None and attempt.get("input_attempts_json") != current_inputs:
+        try:
+            recorded_inputs = json.loads(str(attempt.get("input_attempts_json") or "{}"))
+        except json.JSONDecodeError:
+            recorded_inputs = None
+        if not isinstance(recorded_inputs, dict):
             return KernelResponse(
                 status="failed",
-                message=f"task inputs changed during attempt: {task.task_id}",
+                message=f"frozen task inputs are invalid for attempt: {task.task_id}",
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                errors=["task_inputs_changed_during_attempt"],
+                errors=["attempt_inputs_invalid"],
             )
+        for input_task_id, input_attempt_id in recorded_inputs.items():
+            try:
+                input_attempt = context.store.attempt(int(input_attempt_id))
+            except (TypeError, ValueError):
+                input_attempt = None
+            if (
+                input_attempt is None
+                or int(input_attempt["branch_session_id"]) != session_id
+                or str(input_attempt["task_id"]) != str(input_task_id)
+                or input_attempt.get("status") not in {"implemented", "verified"}
+            ):
+                return KernelResponse(
+                    status="failed",
+                    message=f"frozen input attempt is unavailable: {input_task_id}",
+                    recommended_next=self._recommended_do(task.task_id),
+                    recommended_task_id=task.task_id,
+                    errors=["attempt_input_unavailable"],
+                )
 
         candidate_arg_names = {
             "status",
@@ -1779,7 +2031,7 @@ class StageRunner:
         }
         has_candidate_args = any(name in context.request.args for name in candidate_arg_names)
         candidate: dict[str, str] | None = None
-        if attempt.get("status") != "running" and not has_candidate_args and attempt.get("completion_candidate_ref"):
+        if attempt.get("status") != "running" and not has_candidate_args and (attempt.get("completion_candidate_json") is not None or attempt.get("completion_candidate_ref")):
             candidate, candidate_error = self._load_completion_candidate(context, attempt)
             if candidate_error is not None:
                 return KernelResponse(
@@ -1815,11 +2067,18 @@ class StageRunner:
                 "stderr": str(context.request.args.get("stderr") or ""),
                 "verification_summary": verification_summary,
             }
+            if attempt.get("completion_candidate_json") is not None or not attempt.get("completion_candidate_ref"):
+                candidate["version"] = "2"
+                for kind in ("stdout", "stderr"):
+                    output = candidate[kind]
+                    digest = hashlib.sha256(output.encode("utf-8")).hexdigest() if output else ""
+                    candidate[f"{kind}_hash"] = digest
+                    candidate[kind] = context.evidence.attempt_file_ref(
+                        task.task_id, int(attempt["attempt_no"]), f"runtime.{kind}-{digest}.log",
+                    ) if output else ""
 
         final_status = candidate["status"]
         summary = candidate["summary"]
-        stdout = candidate["stdout"]
-        stderr = candidate["stderr"]
         verification_summary = candidate["verification_summary"]
         expected_success = "verified" if task.lane == "verify" else "implemented"
         if final_status not in {expected_success, "failed", "blocked"}:
@@ -1865,15 +2124,19 @@ class StageRunner:
             gate = self._build_seal_changes_gate(context, attempt, task, attempt_id)
             if gate is not None:
                 return gate
-        if not has_candidate_args and attempt.get("completion_candidate_ref"):
-            candidate_ref = str(attempt["completion_candidate_ref"])
-        else:
-            candidate_ref = context.evidence.write_attempt_file(
-                task.task_id,
-                int(attempt["attempt_no"]),
-                f"completion-candidate-{completion_token}.json",
-                candidate_content,
-            )
+        if candidate.get("version") == "2" and has_candidate_args:
+            for kind in ("stdout", "stderr"):
+                output = str(context.request.args.get(kind) or "")
+                if output:
+                    context.evidence.write_attempt_file(
+                        task.task_id, int(attempt["attempt_no"]), f"runtime.{kind}-{candidate[f'{kind}_hash']}.log", output,
+                    )
+        candidate_ref = attempt.get("completion_candidate_ref") if candidate.get("version") != "2" else None
+        if candidate_ref and has_candidate_args and completion_token == attempt.get("completion_token"):
+            legacy_path = (context.request.cwd / candidate_ref).resolve()
+            if not legacy_path.is_relative_to(context.evidence.root.resolve()):
+                return KernelResponse(status="blocked", message="invalid legacy completion path", errors=["completion_candidate_invalid_path"])
+            legacy_path.write_text(candidate_content, encoding="utf-8", newline="")
         claim = context.store.claim_attempt_completion(
             attempt_id,
             completion_token,
@@ -1881,6 +2144,7 @@ class StageRunner:
             summary,
             candidate_ref,
             completion_token,
+            candidate_content if candidate.get("version") == "2" else None,
         )
         if claim == "completed":
             self._invalidate_latest_attempts(context)
@@ -1905,23 +2169,22 @@ class StageRunner:
 
         attempt_no = int(attempt["attempt_no"])
         runtime_refs: list[tuple[str, str, str]] = []
-        for kind, filename, content in (
-            ("stdout", "runtime.stdout.log", stdout),
-            ("stderr", "runtime.stderr.log", stderr),
-            ("verification_summary", "verification-summary.json", verification_summary),
-        ):
-            ref = self._write_attempt_file_if_not_empty(context, task.task_id, attempt_no, filename, content)
-            if ref is not None:
-                runtime_refs.append((kind, ref, _content_hash(context.request.cwd / ref)))
-        verification_ref = next((ref for kind, ref, _ in runtime_refs if kind == "verification_summary"), None)
+        for kind in ("stdout", "stderr"):
+            if candidate.get("version") == "2":
+                if candidate[kind]:
+                    runtime_refs.append((kind, candidate[kind], candidate[f"{kind}_hash"]))
+            else:
+                ref = self._write_attempt_file_if_not_empty(
+                    context, task.task_id, attempt_no, f"runtime.{kind}.log", candidate[kind],
+                )
+                if ref is not None:
+                    runtime_refs.append((kind, ref, _content_hash(context.request.cwd / ref)))
         verification = None
-        if task.lane == "verify" and verification_ref is not None:
+        if task.lane == "verify" and verification_summary.strip():
             verification_status = "passed" if final_status == "verified" else final_status
             verification = (
-                "claude-code verification",
-                verification_status,
-                0 if verification_status == "passed" else None,
-                verification_ref,
+                "claude-code verification", verification_status,
+                0 if verification_status == "passed" else None, None, verification_summary,
             )
         finding = None
         if final_status in {"failed", "blocked"}:
@@ -1973,22 +2236,28 @@ class StageRunner:
 
     def _run_ship(self, context: StageContext) -> KernelResponse:
         session_id = int(context.session["id"])
-        spec_hash = self._artifact_hash(context, "spec")
-        plan_hash = self._artifact_hash(context, "plan")
-        tasks_hash = self._artifact_hash(context, "tasks")
-        drift = self._drift_response(context, spec_hash, plan_hash)
-        if drift is not None:
-            return drift
-
-        tasks = self._current_tasks(context)
-        if not tasks or tasks_hash is None:
+        states = self._artifact_states(context)
+        repair = earliest_artifact_repair(states, "tasks")
+        if repair is not None:
             return KernelResponse(
                 status="blocked",
-                message="Ship requires current tasks before release analysis",
+                message="Ship requires current registered Spec, Plan, and Tasks inputs",
+                recommended_next=repair,
+                errors=["ship_prerequisites_incomplete"],
+                extras={"artifact_states": states},
+            )
+        revisions = self._latest_artifact_revisions(context)
+        spec_hash = str(revisions["spec"]["content_hash"])
+        plan_hash = str(revisions["plan"]["content_hash"])
+        tasks_hash = str(revisions["tasks"]["content_hash"])
+        tasks = self._current_tasks(context)
+        if not tasks:
+            return KernelResponse(
+                status="blocked",
+                message="Ship requires parseable current tasks before release analysis",
                 recommended_next=_loom_command("tasks"),
                 errors=["ship_prerequisites_incomplete"],
             )
-        self._record_task_snapshots(context, tasks, tasks_hash)
         effective_attempts = self._effective_attempts(context, tasks)
         if len(effective_attempts) != len(tasks):
             recommendation = self._next_task_recommendation(context, tasks)
@@ -2036,13 +2305,16 @@ class StageRunner:
                     "idempotent": True,
                 },
             )
+        input_snapshot, input_token = self._stage_input(context, "ship", ship_input_hash)
         handoff = self._host_artifact_handoff_response(
             context,
             "ship",
-            {"ship_input_hash": ship_input_hash},
+            {"ship_input_hash": ship_input_hash, "input_token": input_token},
             {
                 "ship_packet": ship_packet,
                 "ship_input_hash": ship_input_hash,
+                "input_snapshot": input_snapshot,
+                "input_token": input_token,
                 "mechanical_state": "complete",
             },
         )
@@ -2067,10 +2339,12 @@ class StageRunner:
                 artifact_path, extras = self._artifact_handoff(
                     context,
                     "ship",
-                    {"ship_input_hash": ship_input_hash},
+                    {"ship_input_hash": ship_input_hash, "input_token": input_token},
                     {
                         "ship_packet": ship_packet,
                         "ship_input_hash": ship_input_hash,
+                        "input_snapshot": input_snapshot,
+                        "input_token": input_token,
                         "mechanical_state": "complete",
                         "host_recovery": {
                             "user_visible": False,
@@ -2089,23 +2363,26 @@ class StageRunner:
 
         path, ship_hash = context.artifacts.write("ship", content)
         self._cache_artifact(context, "ship", content, ship_hash)
-        context.store.record_artifact_revision(
-            session_id,
-            "ship",
-            context.artifacts.relative(path),
-            ship_hash,
-            based_on_spec_hash=spec_hash,
-            based_on_plan_hash=plan_hash,
-            based_on_tasks_hash=tasks_hash,
-            based_on_execution_hash=ship_input_hash,
+        registration_token = (
+            str(context.request.args.get("input_token") or "")
+            if context.request.args.get("artifact_file")
+            else input_token
         )
+        _, registration_error = self._register_artifact(
+            context,
+            "ship",
+            path,
+            ship_hash,
+            expected_token=registration_token,
+            execution_hash=ship_input_hash,
+        )
+        if registration_error is not None:
+            return registration_error
         self._resolve_artifact_drift(context, "ship")
         readiness_blockers = list(ship_packet["readiness_blockers"])
         ship_status = "ready" if not readiness_blockers else "blocked"
         context.store.update_branch_session(
             session_id,
-            active_stage="ship",
-            active_ship_hash=ship_hash,
             recommended_next=None,
             recommended_task_id=None,
         )
@@ -2131,6 +2408,8 @@ class StageRunner:
         blocking = context.store.open_blocking_findings(session_id)
         runtime_refs: list[dict[str, Any]] = []
         verification_facts: list[dict[str, Any]] = []
+        review_facts: list[dict[str, Any]] = []
+        sealed_facts: list[dict[str, Any]] = []
         readiness_blockers = [str(finding["message"]) for finding in blocking]
         verification_warnings: list[str] = []
 
@@ -2140,11 +2419,37 @@ class StageRunner:
                 readiness_blockers.append(f"{task.task_id}: task not completed")
                 continue
             attempt_id = int(attempt["id"])
-            refs = self._structured_runtime_refs(attempt, refs_by_attempt[attempt_id])
+            current_revision = int(attempt.get("latest_seal_revision") or 0)
+            db_seals = context.store.sealed_changes_for_attempt(attempt_id)
+            current_in_db = any(seal["seal_revision"] == current_revision for seal in db_seals)
+            current_review = context.store.review_for_seal(attempt_id, current_revision)
+            current_review_ref = (current_review or {}).get("summary_ref")
+            required_refs = [ref for ref in refs_by_attempt[attempt_id]
+                             if not (ref["kind"] == "attempt_changes" and current_in_db)
+                             and not (ref["kind"] == "review_summary" and ref["path"] != current_review_ref)]
+            refs = self._structured_runtime_refs(attempt, required_refs)
             runtime_refs.extend(refs)
             for gap in _runtime_ref_integrity_gaps(context.request.cwd, refs):
                 readiness_blockers.append(f"{task.task_id}: {gap}")
+            if attempt.get("task_packet_json") is not None:
+                _, packet_error = self._load_attempt_task(context, attempt)
+                if packet_error is not None:
+                    readiness_blockers.append(f"{task.task_id}: frozen task packet integrity error")
+            sealed_evidence = self._sealed_evidence(context, attempt_id)
+            if current_revision and not any(seal["seal_revision"] == current_revision for seal in sealed_evidence):
+                readiness_blockers.append(f"{task.task_id}: current sealed evidence missing")
+            for seal in sealed_evidence:
+                if seal.get("integrity_error") and seal.get("seal_revision") == current_revision:
+                    readiness_blockers.append(f"{task.task_id}: {seal['integrity_error']}")
+                if seal.get("seal_revision") == attempt.get("latest_seal_revision"):
+                    sealed_facts.append({"task_id": task.task_id, **{key: value for key, value in seal.items() if key != "review"}})
+                    if seal.get("review") is not None:
+                        review_facts.append({"task_id": task.task_id, **seal["review"]})
             rows = verifications_by_attempt[attempt_id]
+            for row in rows:
+                summary_text = row.get("summary_text")
+                if summary_text is not None and hashlib.sha256(summary_text.encode("utf-8")).hexdigest() != row.get("summary_hash"):
+                    readiness_blockers.append(f"{task.task_id}: verification summary hash mismatch")
             verification_facts.extend(
                 {
                     "id": row.get("id"),
@@ -2154,6 +2459,8 @@ class StageRunner:
                     "status": row.get("status"),
                     "exit_code": row.get("exit_code"),
                     "summary_ref": row.get("summary_ref"),
+                    "summary_text": row.get("summary_text"),
+                    "summary_hash": row.get("summary_hash"),
                     "created_at": row.get("created_at"),
                 }
                 for row in rows
@@ -2178,6 +2485,8 @@ class StageRunner:
             "completed_tasks": [task.task_id for task in tasks if task.task_id in effective_attempts],
             "verification_summary": self._verification_summary(len(effective_attempts), len(tasks), verification_warnings),
             "verifications": verification_facts,
+            "reviews": review_facts,
+            "sealed_changes": sealed_facts,
             "open_findings": [
                 {
                     "id": finding.get("id"),
@@ -2377,8 +2686,25 @@ class StageRunner:
         return self._select_recommended_task(context, tasks)
 
 
-def _do_main_agent(lane: str) -> str:
+def _do_main_role(lane: str) -> str:
     return "verifier" if lane == "verify" else "builder"
+
+
+def _capture_attempt_snapshot(repo_path: Path, attempt: dict[str, Any]) -> dict[str, Any]:
+    frozen = attempt.get("snapshot_repositories_json")
+    if frozen is None:
+        if attempt.get("snapshot_semantics") == "repository_content_v1":
+            return {"errors": ["frozen repository scope missing"]}
+        return _capture_working_tree_content_snapshot(repo_path)
+    try:
+        scope = json.loads(frozen)
+        if (not isinstance(scope, dict) or scope.get("version") != 1
+                or not isinstance(scope.get("roots"), list)
+                or attempt.get("snapshot_semantics") != "repository_content_v1"):
+            raise ValueError("invalid frozen repository scope")
+        return capture_repository_snapshot(repo_path, tuple(scope["roots"]))
+    except (ValueError, TypeError) as exc:
+        return {"errors": [f"frozen repository scope: {exc}"]}
 
 
 def _capture_working_tree_content_snapshot(repo_path: Path) -> dict[str, Any]:
@@ -2397,17 +2723,17 @@ def _capture_working_tree_content_snapshot(repo_path: Path) -> dict[str, Any]:
         result["errors"].append("snapshot_conflicted_index")
         return result
     try:
-        sparse = subprocess.run(["git", "config", "--bool", "core.sparseCheckout"], cwd=repo_path, capture_output=True, text=True)
+        sparse = subprocess.run(["git", "config", "--bool", "core.sparseCheckout"], cwd=repo_path, env=git_environment(), capture_output=True, text=True)
         if sparse.returncode == 0 and sparse.stdout.strip().lower() == "true":
             result["errors"].append("snapshot_sparse_checkout_unsupported")
             return result
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_path, capture_output=True, text=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_path, env=git_environment(), capture_output=True, text=True)
         if head.returncode != 0:
             result["errors"].append(head.stderr.strip() or "snapshot_head_unavailable")
             return result
         with TemporaryDirectory(prefix="codeloom-index-") as tmp_dir:
             index_path = str(Path(tmp_dir) / "index")
-            env = os.environ | {"GIT_INDEX_FILE": index_path}
+            env = git_environment(Path(index_path))
             read_tree = subprocess.run(["git", "read-tree", "HEAD"], cwd=repo_path, env=env, capture_output=True, text=True)
             if read_tree.returncode != 0:
                 result["errors"].append(read_tree.stderr.strip() or "snapshot_read_tree_failed")
@@ -2476,7 +2802,8 @@ def _build_attempt_changes(
         "attempt_no": int(attempt["attempt_no"]),
         "seal_revision": seal_revision,
         "scope": "attempt",
-        "snapshot_semantics": "working_tree_content",
+        "snapshot_semantics": sealed_snapshot.get("snapshot_semantics", "working_tree_content"),
+        "repositories": sealed_snapshot.get("repositories"),
         "diff_source": {
             "start_tree": start_tree,
             "sealed_tree": sealed_tree,
@@ -2501,7 +2828,7 @@ def _build_attempt_changes(
 def _diff_name_status(repo_path: Path, start_tree: str, sealed_tree: str) -> list[dict[str, Any]]:
     output, error = _git_diff_z(repo_path, "--name-status", start_tree, sealed_tree)
     if error:
-        return []
+        raise ValueError(error)
     tokens = [token for token in output.split("\0") if token]
     files: list[dict[str, Any]] = []
     index = 0
@@ -2525,7 +2852,7 @@ def _diff_name_status(repo_path: Path, start_tree: str, sealed_tree: str) -> lis
 def _diff_raw(repo_path: Path, start_tree: str, sealed_tree: str) -> dict[str, dict[str, str]]:
     output, error = _git_diff_z(repo_path, "--raw", start_tree, sealed_tree)
     if error:
-        return {}
+        raise ValueError(error)
     tokens = [token for token in output.split("\0") if token]
     raw: dict[str, dict[str, str]] = {}
     index = 0
@@ -2552,7 +2879,7 @@ def _diff_raw(repo_path: Path, start_tree: str, sealed_tree: str) -> dict[str, d
 def _diff_numstat(repo_path: Path, start_tree: str, sealed_tree: str) -> dict[str, dict[str, Any]]:
     output, error = _git_diff_z(repo_path, "--numstat", start_tree, sealed_tree)
     if error:
-        return {}
+        raise ValueError(error)
     stats: dict[str, dict[str, Any]] = {}
     for token in [item for item in output.split("\0") if item]:
         parts = token.split("\t")
@@ -2573,6 +2900,7 @@ def _git_diff_z(repo_path: Path, mode: str, start_tree: str, sealed_tree: str) -
         result = subprocess.run(
             ["git", "diff", "--no-ext-diff", "--no-textconv", mode, "-z", start_tree, sealed_tree],
             cwd=repo_path,
+            env=git_environment(),
             capture_output=True,
         )
     except FileNotFoundError:
@@ -2620,7 +2948,7 @@ def _collect_host_git_status_snapshot(repo_path: Path, task_id: str, attempt_no:
 
 def _git_status_lines(repo_path: Path) -> tuple[list[str], str | None]:
     try:
-        status = subprocess.run(["git", "status", "--short"], cwd=repo_path, capture_output=True, text=True)
+        status = subprocess.run(["git", "status", "--short"], cwd=repo_path, env=git_environment(), capture_output=True, text=True)
     except FileNotFoundError:
         return [], "git executable not found"
     if status.returncode != 0:

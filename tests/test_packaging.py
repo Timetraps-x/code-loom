@@ -51,7 +51,8 @@ def test_packaged_resources_are_readable():
         assert content.strip()
 
     assert resources.files("codeloom.templates").joinpath("plan-template.md").read_text(encoding="utf-8").strip()
-    assert resources.files("codeloom.agents").joinpath("plan-architect.md").read_text(encoding="utf-8").strip()
+    assert resources.files("codeloom.roles").joinpath("plan-architect.md").read_text(encoding="utf-8").strip()
+    assert not resources.files("codeloom.agents").joinpath("plan-architect.md").is_file()
     assert resources.files("codeloom.projections").joinpath("legacy_claude_code.json").read_text(encoding="utf-8").strip()
 
 

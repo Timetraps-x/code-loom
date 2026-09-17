@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from importlib import resources
 
-from codeloom.app.claude_plugin import _adopt_skill_content, _agent_rule, _argument_rule, _content_rule
+from codeloom.app.claude_plugin import _adopt_skill_content, _argument_rule, _content_rule, _main_role_rule, _skill_content
 from codeloom.prompt_evals.supplement import missing_prompt_eval_case_drafts, write_missing_prompt_eval_cases
 
 
@@ -16,8 +16,19 @@ class PromptEvalCase:
     required_guardrails: tuple[str, ...]
 
 
-def _agent_prompt(name: str) -> str:
-    return resources.files("codeloom.agents").joinpath(name).read_text(encoding="utf-8")
+MAIN_ROLE_PROMPTS = {
+    "spec-analyzer.md",
+    "plan-architect.md",
+    "task-planner.md",
+    "builder.md",
+    "verifier.md",
+    "release-analyzer.md",
+}
+
+
+def _prompt(name: str) -> str:
+    package = "codeloom.roles" if name in MAIN_ROLE_PROMPTS else "codeloom.agents"
+    return resources.files(package).joinpath(name).read_text(encoding="utf-8")
 
 
 def _assert_guardrails(case: PromptEvalCase) -> None:
@@ -26,7 +37,7 @@ def _assert_guardrails(case: PromptEvalCase) -> None:
 
 
 def test_adopt_agent_prompt_keeps_semantics_strong_without_delegation_gate():
-    prompt = _agent_prompt("adopt-expert.md")
+    prompt = _prompt("adopt-expert.md")
 
     for expected in (
         "whole-project evidence",
@@ -62,7 +73,7 @@ def test_adopt_host_prompt_separates_outputs_and_uses_configured_path():
 
 def test_stage_host_prompts_consume_only_usable_constitution():
     artifact_prompt = _content_rule("plan")
-    do_prompt = _agent_rule("do")
+    do_prompt = _main_role_rule("do")
 
     for prompt in (artifact_prompt, do_prompt):
         assert "extras.constitution.path" in prompt
@@ -87,7 +98,7 @@ def test_prompt_eval_supplementer_writes_missing_case_drafts(tmp_path):
 
 
 def test_spec_analyzer_prompt_recovers_real_requirements():
-    analyzer = _agent_prompt("spec-analyzer.md")
+    analyzer = _prompt("spec-analyzer.md")
 
     for expected in (
         "You own the requirement semantics captured in `spec.md`",
@@ -109,79 +120,64 @@ def test_spec_analyzer_prompt_recovers_real_requirements():
         "A proposed method plus missing evidence is not a pair of credible requirement directions",
         "Request one Owner decision only",
         "Produce a coherent, user-facing `spec.md`",
+        "Only an Owner or another accepted governing source",
+        "none creates requirement authority by itself",
+        "leave mechanism selection to Plan",
+        "steady-state requests not perform a full-table query",
+        "ordinary implementation alternatives or Plan-owned lifecycle",
+        "proportionate, readable coverage",
+        "same authority and disposition may be synthesized",
         "Do not produce technical architecture",
     ):
         assert expected in analyzer
 
 
-def test_spec_reviewer_prompt_uses_minimal_counterexamples():
-    reviewer = _agent_prompt("spec-reviewer.md")
+def test_spec_reviewer_requires_identified_candidate_and_material_challenge():
+    reviewer = _prompt("spec-reviewer.md")
 
     for expected in (
-        "bounded advisory reviewer supporting `spec-analyzer`",
-        "# Scope and Proportionality",
-        "For a closed correction",
-        "For a complex demand",
-        "# Counterexample Method",
-        "**Bind**",
-        "**Falsify**",
-        "**Hand back**",
-        "smallest evidence-backed counterexample",
-        "## Commitment loss",
-        "## Evidence overreach",
+        "exact delegated candidate text and supplied candidate identity",
+        "candidate anchor",
+        "accepted obligation or confirmed fact with a source that actually establishes that authority",
+        "candidate-conforming failure",
         "Missing evidence alone is not a finding",
-        "challenge a claimed evidence gap when relevant evidence already resolves the fact",
-        "the draft uses uncertainty to avoid a material judgment",
-        "## Causal-chain incompleteness",
-        "## Unauthorized convergence",
-        "supporting evidence and uncertainty",
-        "the impact on the requirement",
-        "the smallest useful recommendation",
-        "Do not rewrite the Spec",
+        "scoped_evidence_limit",
+        "re-review only prior material finding closure",
+        "no_material_challenge",
+        "cannot establish requirement authority by themselves",
+        "authority or provenance is unclear",
+        "Do not treat omission of a candidate lifecycle",
+        "does not create an Owner direction",
+        "instead of manufacturing a conflict",
+        "leave the final requirement judgment to `spec-analyzer`",
     ):
         assert expected in reviewer
 
 
-def test_spec_agent_prompts_exclude_process_and_cross_layer_language():
-    surface = "\n".join((_agent_prompt("spec-analyzer.md"), _agent_prompt("spec-reviewer.md")))
+def test_spec_role_prompts_keep_workflow_mechanics_out_of_semantic_roles():
+    surface = "\n".join((_prompt("spec-analyzer.md"), _prompt("spec-reviewer.md")))
 
-    for forbidden in (
-        "Internal Requirement-Convergence Sequence",
-        "Raw promise inventory",
-        "Claim-to-evidence selection",
-        "Convergence read-back",
-        "# Commitment Coverage",
-        "ledger",
-        "lineage",
-        "compatibility",
-        "legacy",
-        "FR/AC",
-        "host-callable",
-        "temporary Claude Code child agent",
-        "plan-architect",
-        "Host",
-        "Kernel",
-        "SQLite",
-        "artifact_file",
-        "AskUserQuestion",
-        "blocks Spec convergence",
-    ):
+    for forbidden in ("Kernel", "SQLite", "artifact_file", "AskUserQuestion", "temporary Claude Code child agent"):
         assert forbidden not in surface
 
 
-def test_spec_host_projection_prompt_eval_preserves_agent_kernel_boundary():
-    prompt = _agent_rule("spec")
+def test_spec_host_projection_preserves_main_ownership_and_exact_review_handoff():
+    prompt = _main_role_rule("spec")
 
     for expected in (
-        "`spec-analyzer` as the owner of requirement semantics",
-        "Kernel only registers the final artifact",
-        "Ground the current business or system reality in evidence before drafting",
-        "do not default to journey order, the earliest step, a smallest CRUD slice, current/later/out, or a candidate implementation",
-        "Use `spec-reviewer` only for advisory review",
-        "Ask one highest-information decision",
-        "If such an Owner decision remains unresolved, do not write or register a final `spec.md`",
-        "Goal, Way, and Proof are Agent reasoning responsibilities",
-        "artifact_file",
+        "extras.main_role=spec-analyzer",
+        "read `references/main-role.md`",
+        "Do not invoke `spec-analyzer` as a Claude Code Agent",
+        "current Main owns this stage's semantic analysis",
+        "one bounded question",
+        "compute its SHA-256",
+        "Supply the exact candidate body",
+        "treat `spec-reviewer` as advisory only",
+        "supply the previous and new identities",
+        "When the loaded role concludes that its own clarification gate is met",
+        "use AskUserQuestion before registration",
+        "investigable fact or ordinary reversible technical choice",
+        "extras.register_command",
     ):
         assert expected in prompt
 
@@ -198,7 +194,7 @@ def test_spec_template_is_flexible_decision_projection():
         "Way boundaries",
         "Complex-demand coverage, when useful",
         "Proof direction",
-        "Open questions, only when material",
+        "Design freedom",
         "Prose, lists, tables, or a short narrative are all valid",
         "Current code, a page, a local test, or a historical record proves only the local fact it observes",
         "A business object is not a table",
@@ -222,314 +218,129 @@ def test_spec_template_is_flexible_decision_projection():
         assert forbidden not in template
 
 
-def test_plan_and_tasks_prompt_eval_stage_projection_cases():
-    plan = _agent_prompt("plan-architect.md")
-    plan_reviewer = _agent_prompt("plan-reviewer.md")
-    task_planner = _agent_prompt("task-planner.md")
-    task_reviewer = _agent_prompt("task-reviewer.md")
+def test_plan_and_tasks_roles_preserve_properties_and_reasonable_design():
+    plan = _prompt("plan-architect.md")
+    plan_reviewer = _prompt("plan-reviewer.md")
+    plan_skill = _skill_content("loom-plan", "plan", "description", "constraints=<text>")
+    task_planner = _prompt("task-planner.md")
+    task_reviewer = _prompt("task-reviewer.md")
 
     for expected in (
-        "both the target business implementation model and its concrete landing in the current project",
-        "# Inputs and Evidence",
-        "what the evidence proves, what it does not prove, and why it applies",
-        "Group promises that must be established by one coherent capability",
-        "smallest wrong or prohibited result the design must make unreachable",
-        "# Form the Business Implementation Design",
-        "authoritative, derived, attached, and external snapshot facts",
-        "Unify work surfaces only when they share a business fact",
-        "trigger and actor",
-        "accountable command or owner",
-        "bounded retry or attempt budget",
-        "single authority",
-        "claim, redelivery, actual invocation, and crash-after-claim",
-        "automatic, scheduled, manual/support, admin, callback, and reconciliation paths",
-        "bind each read surface to the same authoritative fact",
-        "local acceptance or submission from an external unknown or terminal outcome",
-        "# Land the Design in the Current Project",
-        "reuse, extend, correct, replace, add, or preserve a real difference",
-        "A technical surface is material when omitting it",
-        "**UI and work surfaces:**",
-        "**Commands, queries, APIs, RPCs, and Jobs:**",
-        "**Data, schema, and read models:**",
-        "**SQL, DAO, mapper, and query paths:**",
-        "**Transactions, concurrency, idempotency, and integration:**",
-        "Keep all participating surfaces semantically aligned",
-        "Use the smallest useful PlantUML diagram",
-        "material object relationship or cardinality",
-        "state lifecycle or illegal transition",
-        "cross-system synchronous/asynchronous sequence",
-        "multi-role workflow",
-        "A closed local correction may omit diagrams",
-        "Produce a readable, self-evidencing `plan.md`",
+        "Account for every material accepted property",
+        "accepted property or hard constraint from a confirmed fact and a candidate mechanism",
+        "Read-only consumption, derived status, paths, search",
+        "complete and proportionate design",
+        "adequacy and necessity",
+        "retain, extend, correct, replace, or add",
+        "Duplicate protection needs a residual failure",
+        "Existing complexity is not justified merely because it already exists",
+        "Mechanism deletion must not silently become property deletion",
+        "data actually published and consumed",
+        "startup | refresh | write | request | background",
+        "O(1) reference access does not make an entire request O(1)",
+        "Class, method, field, and DTO naming",
+        "not a required property ledger",
+        "repeated mechanism blacklists",
+        "The theoretical possibility",
     ):
         assert expected in plan
 
     for expected in (
-        "bounded, adversarial reviewer supporting `plan-architect`",
-        "Use the exact candidate text and its supplied identity",
-        "# Independent Minimum Baseline",
-        "Do not use the candidate's headings, terminology, selected abstractions, or omissions to define this baseline",
-        "The absence of a preferred heading, table, label, class, endpoint, field, index, diagram, or technical surface is not a defect by itself",
-        "# Counterexample Method",
-        "**Baseline**",
-        "**Falsify**",
-        "**Hand back**",
-        "smallest reasonable implementation that fully follows the candidate",
-        "## Commitment-to-model break",
-        "## Mechanism break",
-        "vary which event each reasonable consumer counts—claim, redelivery, invocation, or crash-after-claim",
-        "automatic, scheduled, manual/support, admin, callback, and reconciliation entry",
-        "same authoritative fact rather than allowing local submission to appear as external success",
-        "## Project-landing or cross-layer break",
-        "## Evidence or authority break",
-        "A candidate is underdetermined when a reasonable implementer must still choose",
-        "Do not output a coverage matrix, missing-field checklist, replacement Plan",
-        "If no material counterexample survives",
+        "exact candidate text and supplied identity",
+        "minimum complete and proportionate design obligations",
+        "non-optional obligation",
+        "smallest candidate-conforming counterexample",
+        "not a full alternative design",
+        "parallel set of tables, fields, DTOs, APIs, Jobs, components, state machines",
+        "retained or extended existing mechanism",
+        "replacement loses an accepted property or proof",
+        "O(1) reference access does not hide",
+        "validate A but publish or consume B",
+        "not stage approval",
+        "Review only finding closure, the real delta",
+        "Missing ideal evidence is not a challenge",
     ):
         assert expected in plan_reviewer
 
-    assert "tools:" not in plan
-    assert "tools:" not in plan_reviewer
-
-    surface = "\n".join((plan, plan_reviewer))
-    for forbidden in (
-        "# Stage Ownership",
-        "temporary Claude Code child agent",
-        "artifact_file",
-        "Kernel",
-        "workflow state",
-        "Tasks and Do",
-        "Causal Design Coverage",
-        "supersession/withdrawal",
-        "Plan disposition",
-    ):
-        assert forbidden not in surface
+    assert "use its clarification gate rather than a generic `unclear input` rule" in plan_skill
+    assert "If required user input is unclear" not in plan_skill
+    assert "accepted property or hard constraint from a confirmed fact" not in plan_skill
 
     for expected in (
-        "execution slicing recorded in `tasks.md`",
-        "accepted Spec results and Plan design",
-        "# Form the Implementation Result Chain",
-        "current-to-target implementation results",
-        "shared prerequisite and protected invariant",
-        "# Slice Build Work",
-        "Do not split mechanically by UI, API, service, mapper, schema, file, class, function, or technical layer",
-        "transaction, state transition, public contract, permission gate, migration invariant, or external-effect protocol",
-        "# Design Verify Coverage",
-        "One verify task may cover several naturally related build tasks",
-        "start proof at the real behavior entry that creates it",
-        "prohibited repeated or terminal re-entry",
-        "Verification proves behavior established by accepted design and implementation",
-        "selected mechanism, state or write owner, public/data/external contract",
-        "return the smallest Plan design gap instead of creating research or `verify` work",
-        "# Compile Self-Contained Task Packets",
-        "why   — accepted result and selected design",
-        "where — current responsibility and target landing when material",
-        "Inside the same captured block",
-        "A Task List item containing only `Lane`, `Complexity`, and `Revision` is invalid",
-        "Put every execution-critical fact directly beneath its own checklist line",
-        "A Plan reference supplies traceability, not missing execution context",
-        "exact authoritative state or fact, legal transition, losing-concurrency result, external-effect guard, stop condition, and proof obligation",
-        "generic instruction to “follow the Plan” cannot be the only source",
-        "# Revise and Write",
-        "Revision protects execution meaning, not Markdown wording",
-        "preserve the ID, update the title only if needed, and increment only the affected packet's Revision",
-        "never bump every task merely because an upstream artifact changed",
-        "smallest evidence-backed design gap",
+        "accepted business and technical properties, selected mechanisms",
+        "source-derived property",
+        "A generic instruction to “follow the Plan”, “optimize performance”, or “add caching”",
+        "startup, refresh, write, request, or background time",
+        "execution-critical information only in later notes or maps",
+        "Revision protects execution meaning",
     ):
         assert expected in task_planner
 
     for expected in (
-        "bounded, adversarial reviewer supporting `task-planner`",
-        "Use the exact candidate text and supplied candidate identity",
-        "identity is missing or mismatched",
-        "# Independent Consumer Baseline",
-        "# Simulate the Consumer",
-        "# Falsify",
-        "# Hand Back",
-        "reasonable implementation, code-review, or verification consumer",
-        "first isolate the packet at its checklist line",
-        "A metadata-only Task List item is not saved by a table, delivery map, or later `Task Notes` section",
-        "Later reader notes, delivery maps, or global prose cannot repair",
-        "smallest reasonable execution that fully follows the candidate",
-        "disguise evidence needed to select or finish Plan design as a `verify` task",
-        "generic Plan reference the only source of an authoritative fact, transition, concurrency outcome, external-effect guard, stop, or proof obligation",
-        "proving only a pre-seeded intermediate state while omitting the real creation entry or prohibited repeated/terminal re-entry",
-        "split one transaction, state transition, public contract, permission gate, or invariant",
-        "turn grouped verification into an unrelated mega-batch",
-        "duplicate IDs, dangling build/verify relations",
-        "non-semantic bump, or an unrelated packet change",
-        "not a defect by itself",
-        "inspected scope, the affected packet, and the smallest recovery path",
-        "say so without treating the result as approval",
+        "exact candidate text and supplied candidate identity",
+        "exact packet/relation anchor",
+        "accepted property or confirmed fact with its source",
+        "candidate-conforming downstream failure",
+        "Review only finding closure, those changes",
+        "scoped evidence limit",
     ):
         assert expected in task_reviewer
 
-    for prompt in (task_planner, task_reviewer):
-        for forbidden in (
-            "Kernel",
-            "Host",
-            "workflow state",
-            "artifact_file",
-            "temporary Claude Code child agent",
-            "Plan validation matrix",
-            "deferred",
-            "mapping-gap",
-            "formal disposition",
-        ):
+    for prompt in (plan, plan_reviewer, task_planner, task_reviewer):
+        for forbidden in ("Kernel", "SQLite", "artifact_file", "temporary Claude Code child agent"):
             assert forbidden not in prompt
 
 
-def test_loom_tasks_skill_prompt_eval_assignment_cases():
-    prompt = _content_rule("tasks")
+def test_tasks_skill_keeps_semantics_in_role_and_parser_contract_in_host():
+    host = _content_rule("tasks")
+    role = _prompt("task-planner.md")
 
-    cases = (
-        PromptEvalCase(
-            name="tasks_blocks_owner_or_missing_facts",
-            surface=prompt,
-            badcase="tasks stage turns missing facts into research Tn items",
-            required_guardrails=(
-                "Only a fact necessary to define safe slicing",
-                "lanes other than `build` or `verify`",
-                "never encode it as build/verify tasks or Do fact gathering",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_forms_results_without_kernel_graph",
-            surface=prompt,
-            badcase="tasks stage turns Plan headings into a dependency graph scheduler",
-            required_guardrails=(
-                "trace selected Spec commitments to their Plan abstract/concrete design records",
-                "implementation path of stage-level results",
-                "Planner's recommended order",
-                "Host and Kernel must not parse or gate on that prose",
-                "not a Kernel graph or scheduling contract",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_requires_inline_packet_context",
-            surface=prompt,
-            badcase="tasks stores design references only in a later Task Notes section",
-            required_guardrails=(
-                "Each task block must contain the execution-critical context",
-                "Do not put required context only in later Task Notes",
-                "relevant commitment/design trace",
-                "proof handoff",
-                "Task-local context is opaque to Kernel",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_avoids_plan_copy_and_micro_management",
-            surface=prompt,
-            badcase="tasks artifact copies plan text and specifies function-level edits",
-            required_guardrails=(
-                "Do not copy large plan sections",
-                "micromanage function names, local variables, or line-level edits",
-                "Extract enough execution context from plan design facts",
-                "keep non-blocking constraints, risk notes, and validation notes in task context",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_requires_natural_grouped_verification",
-            surface=prompt,
-            badcase="verify task becomes unrelated mega-batch",
-            required_guardrails=(
-                "multiple naturally related build tasks",
-                "covered tasks, risks, required counterexamples/regression surfaces, and expected evidence",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_maintains_local_revision_metadata",
-            surface=prompt,
-            badcase="tasks stage rewrites one task packet then globally bumps all revisions",
-            required_guardrails=(
-                "Planner and Reviewer compare task packets",
-                "material proof surface",
-                "implementation-before/after relation",
-                "Do not bump `Revision`",
-                "never automatically bump all tasks after upstream drift",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_requires_settled_design_and_unique_identity",
-            surface=prompt,
-            badcase="tasks stage turns an omitted material Plan design into duplicate executable Tn items",
-            required_guardrails=(
-                "accepted Plan design supplies the material result, concrete landing, clear boundary, protected invariant, and proof direction",
-                "Route a missing material design decision or evidence-backed design blocker upstream",
-                "Every `Tn` ID must be unique",
-                "Do not reuse or duplicate an ID",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_requires_revision_baseline_and_stable_titles",
-            surface=prompt,
-            badcase="tasks stage title-polishes a task or guesses its Revision without comparing prior evidence",
-            required_guardrails=(
-                "available prior `tasks.md`, ID/title/Revision values, and attempt baseline",
-                "concrete Revision claim with inspected scope and a smallest recovery route",
-                "Do not change an existing task title",
-                "material execution-contract change retains the ID",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_recovers_available_evidence_before_scoping_gap",
-            surface=prompt,
-            badcase="tasks stage blocks on optional documentation instead of recovering accepted and named-source evidence",
-            required_guardrails=(
-                "Recover accepted artifact, existing task/attempt, and named-source evidence",
-                "Ideal/optional documentation, a preferred harness, and ordinary local details are not blockers",
-                "proceed with the supported task slice",
-                "Do not emit research/scout/discovery tasks",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_scopes_necessary_evidence_gap_without_blocking_unaffected_work",
-            surface=prompt,
-            badcase="tasks stage emits a generic blocked result when only one necessary slicing claim remains unassessable",
-            required_guardrails=(
-                "Only a fact necessary to define safe slicing",
-                "bounded `insufficient evidence` result after available evidence recovery",
-                "concrete Revision claim with inspected scope and a smallest recovery route",
-                "do not make it a gate for unaffected tasks",
-            ),
-        ),
-        PromptEvalCase(
-            name="tasks_preserves_packet_local_revision_after_reviewer_counterevidence",
-            surface=prompt,
-            badcase="reviewer uncertainty causes Planner to rewrite unrelated task packets or block registration",
-            required_guardrails=(
-                "change only directly affected task packets",
-                "Preserve unrelated IDs, titles, Revisions, attempts, and task-local context",
-                "Reviewer counterevidence is advisory, never a readiness gate",
-            ),
-        ),
-    )
+    for expected in (
+        "- [ ] T1: <task title>",
+        "only `build` or `verify` lanes",
+        "Lane`, `Complexity`, and `Revision`",
+        "Task-local semantic context remains opaque to Kernel",
+    ):
+        assert expected in host
 
-    for case in cases:
-        _assert_guardrails(case)
+    for forbidden in (
+        "startup/request placement",
+        "accepted result, selected mechanism",
+        "property the implementation must establish",
+        "generic phrases such as",
+    ):
+        assert forbidden not in host
+
+    for expected in (
+        "accepted result and selected design",
+        "startup, refresh, write, request, or background time",
+        "Do not hide a real design gap in a research/build/verify task",
+        "increment only the affected packet's Revision",
+    ):
+        assert expected in role
 
 def test_tasks_reviewer_projection_uses_exact_candidate_identity():
-    tasks_prompt = _agent_rule("tasks")
+    tasks_prompt = _main_role_rule("tasks")
     content_prompt = _content_rule("tasks")
-    tasks_reviewer_rule = "For `tasks`, advisory review must receive exact candidate text and candidate identity"
 
     for expected in (
-        tasks_reviewer_rule,
-        "The reviewer reports the inspected identity",
-        "missing or mismatched identity permits only a missing-input response",
-        "Re-review only a new exact candidate identity and affected packet/claim",
-        "reviewer silence, uncertainty, or non-material strengthening is not a readiness gate",
+        "compute its SHA-256",
+        "handoff input identity",
+        "Supply the exact candidate body",
+        "input_missing_or_mismatched",
+        "previous and new identities",
+        "Review only finding closure and that delta",
+        "do not decide readiness or workflow state",
     ):
         assert expected in tasks_prompt
+
     for expected in (
-        "The artifact file must contain only user-facing Markdown",
+        "user-facing Markdown",
         "exact repository-relative `extras.artifact_path`",
         "exact `extras.register_command`",
         "Do not reconstruct the artifact path or registration command",
     ):
         assert expected in content_prompt
-    for command in ("spec", "plan", "ship"):
-        assert tasks_reviewer_rule not in _agent_rule(command)
 
 
 def test_stage_content_rule_uses_project_artifact_language():
@@ -565,28 +376,18 @@ def test_artifact_stage_skill_prompt_eval_requires_host_handoff():
         assert "specs/<branch-slug>/" not in prompt
 
 
-def test_plan_and_tasks_host_projection_uses_recovery_first_continuation_routes():
-    plan_prompt = _agent_rule("plan")
-    tasks_prompt = _agent_rule("tasks")
-
-    for expected in (
-        "Prefer completing evidence recovery and candidate revision in the current invocation",
-        "Re-review only materially changed mechanisms and dependencies",
-        "--arg action=route --arg target_stage=<spec|plan>",
-        "use `spec` only for a missing requirement meaning",
-        "`plan` for unresolved evidence or design owned by Plan",
-        "continuation route, not a blocking finding",
-    ):
-        assert expected in plan_prompt
-
-    for expected in (
-        "Prefer completing evidence recovery and packet revision in the current invocation",
-        "Verification proves established behavior",
-        "--arg action=route --arg target_stage=<plan|tasks>",
-        "use `plan` only when material design or design evidence is unresolved",
-        "Never encode that recovery as a research/build/verify task or blocking finding",
-    ):
-        assert expected in tasks_prompt
+def test_plan_and_tasks_host_projection_limits_review_to_real_delta():
+    for command in ("plan", "tasks"):
+        prompt = _main_role_rule(command)
+        for expected in (
+            "previous and new identities",
+            "actual changed passages or packets",
+            "prior material findings",
+            "affected semantic dependencies",
+            "Review only finding closure and that delta",
+            "run a new full review",
+        ):
+            assert expected in prompt
 
 
 def test_loom_spec_skill_prompt_eval_respec_argument_cases():
@@ -605,40 +406,42 @@ def test_loom_spec_skill_prompt_eval_respec_argument_cases():
         assert expected in prompt
 
 
-def test_artifact_stage_skill_prompt_eval_routes_owner_questions_before_kernel():
+def test_artifact_stage_skill_routes_owner_questions_before_registration():
     for command in ("spec", "plan", "tasks", "ship"):
-        prompt = _agent_rule(command)
-
+        prompt = _main_role_rule(command)
         for expected in (
-            "owner-bearing uncertainty",
-            "use AskUserQuestion before running the Kernel stage",
-            "do not guess business semantics, risk acceptance, or long-term technical direction",
+            "loaded role concludes that its own clarification gate is met",
+            "use AskUserQuestion before registration",
+            "investigable fact or ordinary reversible technical choice",
         ):
             assert expected in prompt
 
 
-def test_loom_spec_skill_prompt_eval_runs_host_clarification_to_convergence():
-    prompt = _agent_rule("spec")
+def test_loom_spec_skill_keeps_clarification_with_current_main():
+    prompt = _main_role_rule("spec")
+    skill = _skill_content("loom-spec", "spec", "description", "requirement=<text>")
 
-    for expected in (
-        "Use AskUserQuestion only after evidence leaves one owner-bearing requirement decision",
-        "Ask one highest-information decision",
-        "If such an Owner decision remains unresolved, do not write or register a final `spec.md`",
-    ):
-        assert expected in prompt
+    assert "current Main owns this stage's semantic analysis" in prompt
+    assert "loaded role concludes that its own clarification gate is met" in prompt
+    assert "write the ready clean Markdown artifact" in prompt
+    assert "Ask before preflight only when the command or its arguments cannot be interpreted safely" in skill
+    assert "use its clarification gate rather than a generic `unclear input` rule" in skill
+    assert "If required user input is unclear" not in skill
+    assert "accepted governing source" not in skill
+    assert "candidate lifecycle or activation rules" not in skill
 
 
-def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
+def test_stage_main_role_prompt_eval_ask_user_question_bad_cases():
     cases = (
         PromptEvalCase(
             name="spec_surfaces_only_correctness_changing_owner_choice",
-            surface=_agent_prompt("spec-analyzer.md"),
+            surface=_prompt("spec-analyzer.md"),
             badcase="spec agent guesses an unresolved requirement choice or asks the Owner to decide implementation details",
             required_guardrails=(
                 "Resolve investigable facts before requesting an Owner choice",
                 "An unproven proposed method is not an Owner choice",
                 "Request one Owner decision only",
-                "accepted input or evidence affirmatively supports incompatible requirement meanings or business rules",
+                "accepted input or authoritative evidence independently establishes incompatible current requirement meanings or business rules",
                 "choice changes the required result, scope, acceptance meaning",
                 "the unresolved choice, credible directions and consequences",
                 "the best-supported recommendation",
@@ -648,7 +451,7 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
         ),
         PromptEvalCase(
             name="plan_rederives_design_after_owner_decision",
-            surface=_agent_prompt("plan-architect.md"),
+            surface=_prompt("plan-architect.md"),
             badcase="plan agent sends ordinary choices to the user or applies an Owner answer to only one technical projection",
             required_guardrails=(
                 "Resolve ordinary local, reversible technical choices through an evidence-backed recommendation",
@@ -663,18 +466,18 @@ def test_stage_main_agent_prompt_eval_ask_user_question_bad_cases():
         ),
         PromptEvalCase(
             name="tasks_routes_omitted_design_back_to_plan",
-            surface=_agent_prompt("task-planner.md"),
+            surface=_prompt("task-planner.md"),
             badcase="task planner turns a material Plan omission into executable tasks",
             required_guardrails=(
                 "A missing material design decision cannot be repaired through task wording",
                 "A task is ready to emit only when the accepted design supplies",
-                "stop the final artifact and return the smallest evidence-backed design gap",
-                "Do not disguise it as research, build, or verify work",
+                "Return to Plan only when correct task construction requires selecting or changing",
+                "Do not hide a real design gap in a research/build/verify task",
             ),
         ),
         PromptEvalCase(
             name="ship_separates_owner_decisions_from_workflow_gaps",
-            surface=_agent_prompt("release-analyzer.md"),
+            surface=_prompt("release-analyzer.md"),
             badcase="release analyzer guesses risk acceptance or routes routine release execution upstream",
             required_guardrails=(
                 "Silence is not risk acceptance",
@@ -694,7 +497,7 @@ def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
     cases = (
         PromptEvalCase(
             name="spec_reviewer_returns_owner_choice_to_analyzer",
-            surface=_agent_prompt("spec-reviewer.md"),
+            surface=_prompt("spec-reviewer.md"),
             badcase="spec reviewer chooses an Owner direction instead of returning the semantic conflict",
             required_guardrails=(
                 "surface an Owner choice",
@@ -703,7 +506,7 @@ def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
         ),
         PromptEvalCase(
             name="builder_returns_owner_decision_without_guessing",
-            surface=_agent_prompt("builder.md"),
+            surface=_prompt("builder.md"),
             badcase="builder asks the user directly or silently expands the task boundary",
             required_guardrails=(
                 "Resolve ordinary reversible implementation choices yourself",
@@ -715,7 +518,7 @@ def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
         ),
         PromptEvalCase(
             name="code_reviewer_returns_boundary_conflict_without_deciding_it",
-            surface=_agent_prompt("code-reviewer.md"),
+            surface=_prompt("code-reviewer.md"),
             badcase="code reviewer turns a requirement or design decision into local review advice",
             required_guardrails=(
                 "report an upstream-boundary finding",
@@ -725,7 +528,7 @@ def test_review_and_do_agents_prompt_eval_ask_user_question_bad_cases():
         ),
         PromptEvalCase(
             name="verifier_does_not_guess_missing_acceptance",
-            surface=_agent_prompt("verifier.md"),
+            surface=_prompt("verifier.md"),
             badcase="verifier guesses acceptance or design when proof is missing",
             required_guardrails=(
                 "Do not implement fixes, edit code, expand coverage, or ask the user directly",
@@ -744,7 +547,7 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
     cases = (
         PromptEvalCase(
             name="builder_keeps_task_local_choices_local",
-            surface=_agent_prompt("builder.md"),
+            surface=_prompt("builder.md"),
             badcase="builder asks the user to choose a local implementation detail inside the task boundary",
             required_guardrails=(
                 "Resolve ordinary reversible implementation choices yourself inside the task boundary",
@@ -753,7 +556,7 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
         ),
         PromptEvalCase(
             name="code_reviewer_does_not_manufacture_preferences",
-            surface=_agent_prompt("code-reviewer.md"),
+            surface=_prompt("code-reviewer.md"),
             badcase="code reviewer turns normal style preference into a blocking decision",
             required_guardrails=(
                 "Equivalent local style, speculative hardening, generic clean-code preference, optional strengthening",
@@ -763,7 +566,7 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
         ),
         PromptEvalCase(
             name="verifier_missing_harness_is_not_user_decision",
-            surface=_agent_prompt("verifier.md"),
+            surface=_prompt("verifier.md"),
             badcase="verifier turns an unavailable preferred harness into a user decision",
             required_guardrails=(
                 "If a broad runtime or integration harness cannot start",
@@ -773,7 +576,7 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
         ),
         PromptEvalCase(
             name="release_analyzer_does_not_create_extra_approval_system",
-            surface=_agent_prompt("release-analyzer.md"),
+            surface=_prompt("release-analyzer.md"),
             badcase="release analyzer turns ordinary release ownership into another approval gate",
             required_guardrails=(
                 "Routine release timing, ordinary approval, or deployment execution is not an implementation gap",
@@ -786,282 +589,105 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
     for case in cases:
         _assert_guardrails(case)
 
-def test_builder_prompt_eval_good_cases():
-    prompt = _agent_prompt("builder.md")
+def test_builder_prompt_preserves_property_bearing_result_and_lifecycle_cost():
+    prompt = _prompt("builder.md")
 
     for expected in (
-        "build-lane implementation agent",
+        "CodeLoom `builder` role",
         "quality of one task-scoped implementation",
-        "complete, correct, performant, maintainable, readable, secure, reliable, and testable code",
-        "High quality is not a universal checklist",
         "frozen Task Packet as the execution boundary",
-        "Inspect current code, callers, consumers, tests, state/data flow, and nearby conventions",
-        "Resolve ordinary reversible implementation choices yourself",
+        "what accepted properties must remain true",
+        "which selected mechanism carries each material property",
         "Complete the whole task-scoped result",
-        "Keep important business, data, state, transaction, query, and external-call flow visible",
-        "When the path is material, examine boundedness, query and traversal count",
-        "# When the Task Cannot Close",
+        "Fewer lines or objects with a lost behavior",
+        "before and after placement, frequency, realistic scale, and cost",
+        "work moved from a bounded startup, refresh, or write path into a frequent request path",
+        "Do not add speculative infrastructure",
         "Do not claim independent review or full verification",
-        "Do not produce a compliance checklist or an evidence-field inventory",
     ):
         assert expected in prompt
 
-
-def test_builder_prompt_eval_bad_cases():
-    prompt = _agent_prompt("builder.md")
-    cases = (
-        PromptEvalCase(
-            name="do_not_bypass_task_packet_boundary",
-            surface=prompt,
-            badcase="builder reinterprets upstream prose into a broader execution scope",
-            required_guardrails=(
-                "frozen Task Packet as the execution boundary",
-                "Preserve later tasks and unrelated working-tree changes",
-                "Do not turn a local implementation into an unrequested cross-project cleanup",
-            ),
-        ),
-        PromptEvalCase(
-            name="do_not_optimize_for_tiny_patch",
-            surface=prompt,
-            badcase="builder leaves the task-scoped behavior incomplete to minimize changed lines",
-            required_guardrails=(
-                "Complete the whole task-scoped result",
-                "Do not reduce a required action, state/data effect, side effect, permission outcome, feedback path, or supported entry",
-            ),
-        ),
-        PromptEvalCase(
-            name="material_performance_requires_visible_judgment",
-            surface=prompt,
-            badcase="builder chooses looped queries without examining realistic cost",
-            required_guardrails=(
-                "When the path is material, examine boundedness, query and traversal count",
-                "batch opportunities, external-call count, transaction scope, concurrency, idempotency",
-                "avoids avoidable N+1 work, repeated traversal, duplicate external effects, unbounded work",
-            ),
-        ),
-        PromptEvalCase(
-            name="major_semantic_change_returns_upstream",
-            surface=prompt,
-            badcase="builder guesses a new contract or design mechanism during implementation",
-            required_guardrails=(
-                "Stop only when a high-quality implementation would require changing accepted requirement meaning",
-                "public/data/external contract",
-                "material design mechanism",
-                "why no task-local implementation is safe",
-                "Report this conflict to the host",
-                "do not perform workflow routing or modify upstream artifacts",
-            ),
-        ),
-        PromptEvalCase(
-            name="stale_guidance_does_not_expand_build_scope",
-            surface=prompt,
-            badcase="builder copies stale convention or generic guidance into extra architecture",
-            required_guardrails=(
-                "Current requirement meaning and accepted design outrank stale conventions or generic guidance",
-                "Reuse an existing capability when its semantics fit",
-                "Do not add speculative infrastructure",
-            ),
-        ),
-        PromptEvalCase(
-            name="builder_places_named_facts_by_semantic_owner",
-            surface=prompt,
-            badcase="builder places stable domain facts under a convenient implementation class",
-            required_guardrails=(
-                "Place named facts and responsibilities with their semantic owner",
-            ),
-        ),
-    )
-
-    for case in cases:
-        _assert_guardrails(case)
+    assert "Kernel" not in prompt
+    assert "SQLite" not in prompt
 
 
-def test_code_reviewer_prompt_eval_bad_cases():
-    prompt = _agent_prompt("code-reviewer.md")
-    cases = (
-        PromptEvalCase(
-            name="review_catches_task_boundary_bypass",
-            surface=prompt,
-            badcase="implementation expands beyond the frozen Task result or silently changes accepted design",
-            required_guardrails=(
-                "the patch expands beyond the Task, implements later work, or silently changes accepted design",
-                "where this task stops",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_requires_concrete_failure",
-            surface=prompt,
-            badcase="reviewer emits a generic quality label without a failure or cost",
-            required_guardrails=(
-                "# Counterexample Method",
-                "concrete input, state, scale, concurrency, failure, consumer, or maintenance scenario",
-                "the wrong result or material cost",
-                "the smallest useful correction",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_rejects_generic_style_findings",
-            surface=prompt,
-            badcase="reviewer blocks equivalent local style or speculative hardening",
-            required_guardrails=(
-                "Equivalent local style, speculative hardening, generic clean-code preference, optional strengthening",
-                "not findings",
-                "There is no finding quota",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_uses_attempt_scoped_diff_only",
-            surface=prompt,
-            badcase="reviewer treats full working-tree state or a Builder file list as the task change",
-            required_guardrails=(
-                "attempt-scoped diff from attempt start to that sealed revision",
-                "Do not infer current-task changes from the full working tree, `git status`, a Builder file list",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_blocks_invalid_review_object",
-            surface=prompt,
-            badcase="reviewer passes despite unavailable or mismatched scoped changes",
-            required_guardrails=(
-                "If the attempt-scoped diff is unavailable or does not match the supplied revision",
-                "return `blocked` for review-object integrity",
-                "blocked` only when the review object is unavailable, stale, or invalid",
-                "decide workflow routing",
-                "instead of reviewing another object",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_falsifies_material_performance_cost",
-            surface=prompt,
-            badcase="reviewer misses looped queries or reports performance without a growth mechanism",
-            required_guardrails=(
-                "realistic input size causes N+1 queries, repeated traversal, duplicate I/O, unbounded work",
-                "Use only lenses that can change the correctness or quality conclusion for this task",
-            ),
-        ),
-        PromptEvalCase(
-            name="review_checks_semantic_ownership_only_when_concrete",
-            surface=prompt,
-            badcase="reviewer misses duplicated stable facts or complains about ownership without consequence",
-            required_guardrails=(
-                "stable fact is placed under a temporary or incorrect owner",
-                "making a concrete rule change inconsistent or duplicated",
-            ),
-        ),
-    )
+def test_code_reviewer_requires_three_anchor_finding_and_delta_review():
+    prompt = _prompt("code-reviewer.md")
 
-    for case in cases:
-        _assert_guardrails(case)
+    for expected in (
+        "attempt-scoped diff from attempt start to that sealed revision",
+        "return `blocked` for review-object integrity",
+        "smallest relevant candidate-conforming scenario",
+        "accepted Task property, design obligation, or demonstrated current-project constraint",
+        "concrete input, state, scale, frequency",
+        "before/after lifecycle placement, frequency, realistic scale",
+        "work previously bounded to startup, refresh, or write is moved into the request path",
+        "inspect prior finding closure and the changed hunks",
+        "`blocked` only when the review object is unavailable, stale, or invalid",
+    ):
+        assert expected in prompt
+
+    assert "There is no finding quota" in prompt
 
 
-def test_loom_do_skill_prompt_eval_bad_cases():
-    prompt = _agent_rule("do")
-    cases = (
-        PromptEvalCase(
-            name="skill_routes_lanes_to_quality_owners",
-            surface=prompt,
-            badcase="host treats every task as generic implementation plus verification",
-            required_guardrails=(
-                "Use the project `builder` Agent for `build` tasks",
-                "project `verifier` Agent for `verify` tasks",
-            ),
-        ),
-        PromptEvalCase(
-            name="skill_keeps_local_choices_with_builder",
-            surface=prompt,
-            badcase="host asks the user about a reversible task-local implementation choice",
-            required_guardrails=(
-                "Local reversible choices remain with Builder",
-                "Do not ask about task-local implementation choices",
-            ),
-        ),
-        PromptEvalCase(
-            name="skill_keeps_review_orchestration_out_of_builder",
-            surface=prompt,
-            badcase="builder invokes review or constructs runtime evidence itself",
-            required_guardrails=(
-                "Builder does not invoke Code Reviewer or manage runtime actions",
-                "follow `extras.host_internal_flow`",
-                "seal that exact attempt before review",
-            ),
-        ),
-        PromptEvalCase(
-            name="skill_never_falls_back_to_full_worktree_review",
-            surface=prompt,
-            badcase="host reviews full working-tree state when exact sealed review input is unavailable",
-            required_guardrails=(
-                "exact attempt-scoped diff",
-                "`reviewer_handoff` returned from `seal-changes`",
-                "never substitute a full-worktree diff, Builder file list, or stale seal",
-            ),
-        ),
-        PromptEvalCase(
-            name="skill_requires_fresh_review_after_changes",
-            surface=prompt,
-            badcase="host reuses an earlier pass after Builder changes the implementation",
-            required_guardrails=(
-                "On `changes_requested`",
-                "seal again and invoke a fresh Code Reviewer for the new seal",
-                "a prior review never approves a later seal revision",
-            ),
-        ),
-        PromptEvalCase(
-            name="skill_auto_recovers_internal_actions",
-            surface=prompt,
-            badcase="host exposes a retryable seal or completion action to the user",
-            required_guardrails=(
-                "Host-internal",
-                "`host_recovery.user_visible` is false",
-                "perform it automatically",
-            ),
-        ),
-    )
+def test_loom_do_skill_keeps_host_choreography_and_recovery():
+    prompt = _main_role_rule("do")
 
-    for case in cases:
-        _assert_guardrails(case)
+    for expected in (
+        "Do is serial",
+        "action=begin",
+        "frozen `extras.task_packet`",
+        "Do not invoke Builder or Verifier as a subagent",
+        "extras.host_internal_flow",
+        "exact attempt-scoped diff",
+        "action=record-review",
+        "seal again and invoke a fresh Code Reviewer",
+        "action=retry",
+        "action=route",
+        "Host-internal",
+        "`action=unlock` is user-only recovery",
+        "completed the blocked task themselves",
+        "`status=implemented` for Build or `status=verified` for Verify",
+    ):
+        assert expected in prompt
+
+    for forbidden in (
+        "before and after lifecycle placement",
+        "what accepted properties must remain true",
+        "query and traversal count",
+    ):
+        assert forbidden not in prompt
 
 
 def test_loom_do_skill_prompt_eval_host_handoff_cases():
-    prompt = _agent_rule("do")
+    prompt = _main_role_rule("do")
 
     for expected in (
         "do not run `loom stage do` as a one-shot execution command",
-        "action=begin",
         "extras.attempt_id",
         "extras.lane",
-        "extras.main_agent",
-        "frozen `extras.task_packet`",
-        "extras.host_internal_flow",
-        "Builder owns complete, correct, performant, maintainable, readable, secure, reliable, and testable implementation",
-        "Builder does not invoke Code Reviewer",
+        "extras.main_role",
         "reviewer_handoff",
         "attempt-scoped diff",
-        "action=record-review",
         "non-empty `review_summary`",
-        "same Builder attempt",
+        "same Build attempt",
         "fresh Code Reviewer",
-        "complete the build attempt as `implemented`",
         "Build completion means the latest sealed implementation passed review",
-        "Complete it as `verified` only when every material obligation is proved strongly enough",
         "verification_summary",
-        "Do is serial",
-        "`extras.skipped: true`",
-        "`status: completing` with a persisted `completion_candidate_ref`",
-        "run the supplied `host_recovery.command_args` without reconstructing",
-        "`effect: local_implementation` with a valid Build `retry_task_id`",
-        "call `action=retry` for that Build",
-        "call `action=route`",
+        "host_recovery.internal_action: resume_complete",
+        "run its `command_args` without reconstructing",
         "do not rerun or invalidate unrelated effective tasks",
+        "Manual completion does not repair stale registered lineage",
         "status=<implemented|verified|failed|blocked>",
     ):
         assert expected in prompt
 
 
 def test_verifier_prompt_eval_quality_and_result_semantics():
-    verifier = _agent_prompt("verifier.md")
+    verifier = _prompt("verifier.md")
 
     for expected in (
-        "verify-lane agent",
+        "CodeLoom `verifier` role",
         "Verification is behavior judgment, not evidence-field completion",
         "# Verification Method",
         "Choose the strongest useful path that the current project can support",
@@ -1081,9 +707,9 @@ def test_verifier_prompt_eval_quality_and_result_semantics():
 
 def test_prompt_eval_rejects_old_smallest_implementation_bias():
     surfaces = {
-        "builder": _agent_prompt("builder.md"),
-        "code-reviewer": _agent_prompt("code-reviewer.md"),
-        "loom-do": _agent_rule("do"),
+        "builder": _prompt("builder.md"),
+        "code-reviewer": _prompt("code-reviewer.md"),
+        "loom-do": _main_role_rule("do"),
     }
     forbidden = (
         "Make the smallest implementation necessary",
@@ -1099,9 +725,9 @@ def test_prompt_eval_rejects_old_smallest_implementation_bias():
 
 def test_core_agent_prompts_keep_stack_specific_verification_out_of_global_surfaces():
     surfaces = {
-        "builder": _agent_prompt("builder.md"),
-        "verifier": _agent_prompt("verifier.md"),
-        "loom-do": _agent_rule("do"),
+        "builder": _prompt("builder.md"),
+        "verifier": _prompt("verifier.md"),
+        "loom-do": _main_role_rule("do"),
     }
     forbidden = (
         "legacy Spring/MyBatis/XML modules",
@@ -1114,206 +740,109 @@ def test_core_agent_prompts_keep_stack_specific_verification_out_of_global_surfa
         for phrase in forbidden:
             assert phrase not in surface, f"{surface_name} still contains stack-specific verification detail: {phrase}"
 
-    assert "Run proportional local checks" in surfaces["builder"]
-    assert "Do not create a broad harness" in surfaces["builder"]
-    assert "selecting checks" in surfaces["verifier"]
-    assert "broad runtime or integration harness" in surfaces["verifier"]
-    assert "proportional checks" in surfaces["loom-do"]
-    assert "preferred broad harness" in surfaces["loom-do"]
+    assert "focused checks actually run" in surfaces["builder"]
+    assert "strongest useful path" in surfaces["verifier"]
+    assert "actual checks and observations" in surfaces["loom-do"]
 
     for surface_name in ("builder", "verifier"):
         assert "temporary Claude Code child agent" not in surfaces[surface_name]
 
-def test_coding_goal_prompt_guardrails_cover_bad_cases():
-    builder = _agent_prompt("builder.md")
-    reviewer = _agent_prompt("code-reviewer.md")
-    verifier = _agent_prompt("verifier.md")
-    release = _agent_prompt("release-analyzer.md")
-    task_planner = _agent_prompt("task-planner.md")
-    plan_architect = _agent_prompt("plan-architect.md")
+def test_main_roles_carry_semantic_continuity_without_kernel_logic():
+    builder = _prompt("builder.md")
+    reviewer = _prompt("code-reviewer.md")
+    verifier = _prompt("verifier.md")
+    release = _prompt("release-analyzer.md")
+    task_planner = _prompt("task-planner.md")
+    plan_architect = _prompt("plan-architect.md")
 
-    for expected in (
-        "quality of one task-scoped implementation",
-        "High quality is not a universal checklist",
-        "behavior correctness, project fit, performance and resource cost, maintainability, readability",
-        "Keep important business, data, state, transaction, query, and external-call flow visible",
-        "query and traversal count",
-        "Introduce a helper or abstraction only when it provides real reuse",
-        "Place named facts and responsibilities with their semantic owner",
-        "focused tests when they are the natural protection",
-        "no known task-scoped correctness or material quality defect",
-        "Do not claim independent review or full verification",
-    ):
-        assert expected in builder
+    assert "accepted properties must remain true" in builder
+    assert "before and after placement, frequency, realistic scale, and cost" in builder
+    assert "accepted Task property" in reviewer
+    assert "before/after lifecycle placement" in reviewer
+    assert "business or technical property" in verifier
+    assert "startup, refresh, write, request, and background paths" in verifier
+    assert "O(1) access or current-ETag comparison" in verifier
+    assert "delivered and proven" in release
+    assert "human assertion" in release
+    assert "source-derived property" in task_planner
+    assert "Mechanism deletion must not silently become property deletion" in plan_architect
 
-    for expected in (
-        "bounded, adversarial reviewer",
-        "# Independent Baseline",
-        "# Counterexample Method",
-        "smallest relevant candidate-conforming scenario",
-        "N+1 queries, repeated traversal, duplicate I/O, unbounded work",
-        "There is no finding quota",
-        "failure_scenario",
-        "the wrong result or material cost",
-        "Do not add a category merely to classify a finding",
-    ):
-        assert expected in reviewer
-
-    for expected in (
-        "Verification is behavior judgment, not evidence-field completion",
-        "Do not broaden to the whole Plan or unrelated build tasks",
-        "Choose the strongest useful path that the current project can support",
-        "A pre-seeded intermediate state does not prove creation behavior",
-        "retain narrower checks that still prove scoped facts",
-        "`verified`: every material obligation",
-        "`failed`: an actual observation contradicts required behavior",
-        "`blocked`: one or more necessary obligations remain not verified",
-        "conclusion: verified | failed | not_verified | not_applicable",
-    ):
-        assert expected in verifier
-
-    for prompt in (builder, reviewer, verifier):
+    for prompt in (builder, reviewer, verifier, release, task_planner, plan_architect):
         for forbidden in ("Kernel", "SQLite", "runtime_refs", "temporary Claude Code child agent"):
             assert forbidden not in prompt
 
 
-    for expected in (
-        "Frozen Ship Packet as the current execution baseline",
-        "what was delivered, what is actually proven",
-        "Task completion is not proof",
-        "Read only the smallest relevant part of `spec.md`, `plan.md`, or `tasks.md`",
-        "Do not convert successful execution, completed tasks, compilation, static inspection",
-        "Include SQL/data changes, configuration or switches, permissions, UI/menu changes",
-        "A simple change does not acquire these concerns because a template names them",
-        "Silence is not risk acceptance",
-        "Release readiness: ready | blocked",
-        "Goal result confidence: proven | partially_proven | not_proven",
-        "effect: tasks",
-        "Do not rerun verification, review code, change implementation",
-        "You do not make the release owner's actual release decision",
-    ):
-        assert expected in release
-
-    for forbidden in ("Kernel", "SQLite", "AskUserQuestion", "artifact registration", "Host"):
-        assert forbidden not in release
+def test_ship_host_keeps_generic_handoff_and_release_semantics_in_role():
+    host_rule = _main_role_rule("ship")
+    content_rule = _content_rule("ship")
+    release = _prompt("release-analyzer.md")
 
     for expected in (
-        "execution slicing recorded in `tasks.md`",
-        "accepted Spec results and Plan design",
-        "current-to-target implementation results",
-        "coherent deliverable outcome",
-        "A `build` task establishes one bounded implementation result",
-        "A `verify` task proves a behavior, risk boundary, contract",
-        "One verify task may cover several naturally related build tasks",
-        "Inside the same captured block",
-        "accepted result and selected design",
-        "current responsibility and target landing when material",
-        "Revision protects execution meaning, not Markdown wording",
-        "Do not place execution-critical information only in later notes or maps",
-        "never bump every task merely because an upstream artifact changed",
-    ):
-        assert expected in task_planner
-
-    for expected in (
-        "target business implementation model and its concrete landing",
-        "required result, its primary scenarios",
-        "smallest wrong or prohibited result",
-        "authoritative, derived, attached, and external snapshot facts",
-        "trigger and actor",
-        "atomic local fact/state change",
-        "current path and semantic owner",
-        "reuse, extend, correct, replace, add, or preserve a real difference",
-        "protected fact, invariant, or counterexample",
-        "A technical surface is material when omitting it",
-        "Keep all participating surfaces semantically aligned",
-        "Verification design",
-        "Produce a readable, self-evidencing `plan.md`",
-    ):
-        assert expected in plan_architect
-
-
-def test_ship_host_uses_frozen_packet_and_internal_freshness_recovery():
-    host_rule = _agent_rule("ship")
-
-    for expected in (
-        "ship_prerequisites_incomplete",
-        "exact frozen `extras.ship_packet` and `extras.ship_input_hash`",
-        "Task completion alone is not proof",
-        "effect: spec | plan | tasks",
-        "exact registration command carrying the original `ship_input_hash`",
-        "Treat `ship_inputs_changed` as Host-internal freshness recovery",
-        "Do not ask the user to repair workflow state",
-        "does not require inventing another approval gate",
+        "extras.main_role=release-analyzer",
+        "read `references/main-role.md`",
+        "current Main owns this stage's semantic analysis",
+        "write the ready clean Markdown artifact",
     ):
         assert expected in host_rule
 
+    for expected in ("frozen `extras.input_token`", "<stage>_inputs_changed", "extras.register_command"):
+        assert expected in content_rule
+
+    assert "Task completion is not proof" in release
+    assert "delivered and proven" in release
+
 
 def test_plan_reviewer_receives_identified_candidate_draft():
-    architect = _agent_prompt("plan-architect.md")
-    reviewer = _agent_prompt("plan-reviewer.md")
-    host_rule = _agent_rule("plan")
+    architect = _prompt("plan-architect.md")
+    reviewer = _prompt("plan-reviewer.md")
+    host_rule = _main_role_rule("plan")
 
     for expected in (
-        "provided `plan.md` candidate",
-        "Use the exact candidate text and its supplied identity",
-        "If candidate text is absent, state the missing input and stop",
+        "exact candidate text and supplied identity",
+        "State which identity the review inspects",
+        "input_missing_or_mismatched",
         "rather than inferring it from an on-disk artifact",
     ):
         assert expected in reviewer
 
     for expected in (
-        "exact candidate",
-        "draft identity",
-        "readable commitment/design traceability",
-        "only current-state evidence, not candidate review",
-        "The Architect delivers an exact candidate",
+        "compute its SHA-256",
+        "handoff input identity",
+        "exact candidate body",
+        "accepted upstream properties",
     ):
         assert expected in host_rule
 
     assert "artifact_file" not in architect
-    assert "draft identity" not in architect
+    assert "candidate identity" not in architect
 
 
 def test_plan_host_delegation_keeps_child_evidence_bounded():
-    architect = _agent_prompt("plan-architect.md")
-    reviewer = _agent_prompt("plan-reviewer.md")
-    host_rule = _agent_rule("plan")
+    architect = _prompt("plan-architect.md")
+    reviewer = _prompt("plan-reviewer.md")
+    host_rule = _main_role_rule("plan")
 
     for expected in (
-        "When an unconfirmed fact can change this stage's judgment, formulate one bounded question",
-        "For `plan`, investigate only current models, callers, consumers, data/state writes",
-        "The child agent returns only `question`, `observed facts`, `constraints or counterevidence`, `unknowns`, and `decision relevance`",
-        "It must not write artifacts, modify files, ask the user, choose requirements or design, assign tasks, decide readiness, or decide workflow state",
-        "`plan-architect` decides applicability and synthesizes the artifact",
-        "A fact with a locatable repository, runtime, or external source is an evidence gap",
-        "do not use an Owner question to acquire it",
-        "Route an Owner question only after that investigation leaves incompatible directions",
-        "Review the exact candidate through `plan-reviewer`",
-        "Re-review only materially changed mechanisms and dependencies",
+        "one unconfirmed fact that can change a named stage judgment",
+        "smallest relevant scope",
+        "smallest discriminating evidence",
+        "source and applicability",
+        "must not write artifacts, modify files, ask the user, choose requirements or design",
+        "current Main decides applicability and synthesis",
     ):
         assert expected in host_rule
 
-    for expected in (
-        "An unconfirmed fact with a locatable repository, runtime, or external source is an evidence gap",
-        "Do not use an Owner decision to obtain a fact that can be investigated",
-        "If that fact prevents a correct design, stop with the specific evidence needed",
-        "Request one Owner decision only after investigating every locatable source that can distinguish the direction",
-    ):
-        assert expected in architect
+    assert "Request one Owner decision only after investigating" in architect
+    assert "Do not manufacture an Owner question for an investigable fact" in reviewer
 
     for prompt in (architect, reviewer):
-        for forbidden in (
-            "temporary Claude Code child agent",
-            "artifact_file",
-            "Kernel",
-            "workflow state",
-        ):
+        for forbidden in ("temporary Claude Code child agent", "artifact_file", "Kernel", "workflow state"):
             assert forbidden not in prompt
 
 
 def test_plan_prompts_select_analysis_models_for_material_relationships():
-    architect = _agent_prompt("plan-architect.md")
-    reviewer = _agent_prompt("plan-reviewer.md")
+    architect = _prompt("plan-architect.md")
+    reviewer = _prompt("plan-reviewer.md")
 
     for expected in (
         "PlantUML",
@@ -1327,9 +856,192 @@ def test_plan_prompts_select_analysis_models_for_material_relationships():
         assert expected in architect
 
     for expected in (
-        "independently derived minimum design obligation",
+        "minimum complete and proportionate design obligations",
         "smallest reasonable implementation that fully follows the candidate",
-        "concrete failure scenario",
+        "concrete failure or material cost",
         "Require a concrete surface only when its absence",
     ):
         assert expected in reviewer
+
+
+def test_tasks_packets_preserve_result_links_and_relation_premises():
+    planner = _prompt("task-planner.md")
+    reviewer = _prompt("task-reviewer.md")
+    for text in ("accepted business or system result", "transferred result premise", "Relation reachability alone", "Before withholding Tasks", "decision-changing claim, inspected scope", "does not replace execution invalidation after a build retry"):
+        assert text in planner
+    for text in ("changed transferred premise", "layer or file ledger entries", "compact cross-layer task", "Require a candidate-conforming failure"):
+        assert text in reviewer
+    host = _main_role_rule("tasks") + _content_rule("tasks")
+    assert "transferred result premise" not in host
+    assert "Before withholding Tasks" not in host
+
+def test_do_roles_preserve_execution_meaning_and_evidence_handoff():
+    builder = _prompt("builder.md")
+    reviewer = _prompt("code-reviewer.md")
+    verifier = _prompt("verifier.md")
+    for text in ("Do not re-litigate an accepted Plan choice", "locatable implementation facts from missing execution meaning", "Ordinary reversible details and equivalent local implementations", "the sources inspected"):
+        assert text in builder
+    for text in ("obligation_source:", "affected_contract:", "missing delta alone is not review-object integrity failure", "trustworthy seal-to-seal delta"):
+        assert text in reviewer
+    for text in ("behavior:", "entry:", "counterexample:", "proof_limit:", "affected_contract:", "Narrower evidence permits `verified` only when", "identify which prevent packet closure"):
+        assert text in verifier
+    host = _main_role_rule("do")
+    for text in ("prior and new seal identities", "prior verdict and material findings", "Builder dispositions", "from available sealed evidence", "full review of the current sealed attempt-scoped object", "invent missing evidence fields"):
+        assert text in host
+    assert "obligation_source:" not in host
+    assert "proof_limit:" not in host
+
+def test_ship_summarizes_existing_conclusions_without_another_audit():
+    release = _prompt("release-analyzer.md")
+    for text in (
+        "lightweight delivery summary, not another acceptance audit",
+        "supplied effective Build and Verify conclusions",
+        "Do not recompute attempt validity",
+        "Evidence recovery is not a mandatory step",
+        "A human assertion needs an explicit recorded source",
+        "Do not invent owners, timing, action completion, or risk acceptance",
+        "`ready` requires sufficient recorded proof",
+        "Do not weaken a required proof obligation",
+        "Return an upstream gap instead of a release artifact only when",
+        "A small delivery needs only a few paragraphs",
+        "Do not rerun verification, review code, change implementation",
+    ):
+        assert text in release
+    for text in (
+        "For each material accepted business or technical property, determine",
+        "Before concluding blocked, not_proven, or an upstream gap, inspect",
+        "A latest attempt does not replace the effective attempt",
+    ):
+        assert text not in release
+    host = _main_role_rule("ship") + _content_rule("ship")
+    assert "A human assertion needs" not in host
+    assert "`ready` requires sufficient recorded proof" not in host
+
+
+def test_plan_design_connects_project_path_validation_and_proof():
+    plan = _prompt("plan-architect.md")
+    for text in (
+        "Develop each capability as one connected decision",
+        "actual entry, current data, authoritative owner, integration contract",
+        "positive replacement path for every still-accepted property",
+        "assign each check to the boundary that can enforce its truth",
+        "Repeat a check only for a concrete residual failure",
+        "expensive work avoided and input-dependent work remaining",
+        "Separate an existing shared guarantee from this change's integration",
+        "Tasks allocates the implementation and verification work",
+        "Existing-environment discovery and reversible local setup are not missing product design",
+        "without deleting an obligation",
+    ):
+        assert text in plan
+    reviewer = _prompt("plan-reviewer.md")
+    for text in (
+        "cheap final response while still doing the expensive upstream work",
+        "validate A but publish or consume B",
+        "without a residual failure",
+        "functioning framework can coexist with a wrongly wired caller",
+        "not merely an unspecified fixture or preferred tool",
+    ):
+        assert text in reviewer
+
+
+def test_tasks_assign_preparation_and_simulate_usable_handoffs():
+    planner = _prompt("task-planner.md")
+    for text in (
+        "work backward from a usable, provable result",
+        "if all producers stop exactly as written",
+        "bounded reversible setup and fixtures",
+        "must be delivered with the appropriate build result",
+        "remain explicit prerequisites",
+        "does not invalidate independent work",
+        "Do not hide new implementation inside verify",
+        "otherwise preserve the limitation and required proof",
+        "connect it to the actual input/version consumed",
+        "Reissuing the packet and repeating narrower checks does not resolve the same blocker",
+        "locating an already-required resource or adding a result reference alone",
+    ):
+        assert text in planner
+    reviewer = _prompt("task-reviewer.md")
+    for text in (
+        "Simulate all producers stopping exactly as written",
+        "without adding unassigned implementation",
+        "removing an obligation needs an authorized source",
+        "source-text matching instead of behavior",
+        "Existing-environment discovery and bounded reversible verify setup need not become build tasks",
+    ):
+        assert text in reviewer
+
+def test_plan_review_corrections_remain_main_design_decisions():
+    plan = _prompt("plan-architect.md")
+    reviewer = _prompt("plan-reviewer.md")
+    assert "cited obligation and failure scenario apply to the current candidate" in plan
+    assert "smallest sufficient correction" in plan
+    assert "without dropping an accepted property" in plan
+    assert "whole design's invariants and lifecycle cost" in plan
+    assert "replacing superseded decisions" in plan
+    assert "A proposed mechanism is not an accepted obligation" in reviewer
+    assert "not whether Main adopted your proposed solution" in reviewer
+
+
+def test_tasks_balance_split_value_and_prerequisite_timing():
+    planner = _prompt("task-planner.md")
+    reviewer = _prompt("task-reviewer.md")
+    assert "benefit outweighs handoff, repeated context, and review cost" in planner
+    assert "otherwise merge the related work into one bounded result" in planner
+    assert "Sharing a repository or release alone is not a reason to merge" in planner
+    assert "implementation-start conditions, integration conditions, and final acceptance proof" in planner
+    assert "Stronger confidence alone does not justify an earlier dependency" in planner
+    assert "If a build's own stop requires real integration, retain that prerequisite" in planner
+    assert "never waives required proof, substitutes verify for build review" in planner
+    assert "concrete avoidable cost or broken handoff" in reviewer
+    assert "Final acceptance evidence is not automatically an implementation-start prerequisite" in reviewer
+    assert "never use verify to replace required build review" in reviewer
+
+
+def test_adopt_does_not_own_repository_scope_discovery():
+    adopt = _prompt("adopt-expert.md")
+    assert "git.repositories" not in adopt
+    from codeloom.app.claude_plugin import bundled_claude_skill_resources
+    resources = bundled_claude_skill_resources()
+    skill = next(content for path, content in resources.items() if str(path).replace("\\", "/").endswith("loom-adopt/SKILL.md"))
+    assert "maintained by `loom init`, not adopt" in skill
+    assert "Preserve it unchanged" in skill
+
+
+def test_stage_ownership_has_local_correction_and_genuine_return_converses():
+    pairs = (
+        ("spec-analyzer.md", "Technical possibility alone does not establish current scope",
+         "Preserve an explicitly accepted obligation", "Missing model, mechanism, integration"),
+        ("plan-architect.md", "Repair it here",
+         "Return to Spec only when", "Owner-bearing technical choice within Plan"),
+        ("task-planner.md", "Repair those defects in Tasks",
+         "Return to Plan only when", "decision merely absent from your candidate packet"),
+    )
+    for name, local, boundary, distinction in pairs:
+        prompt = _prompt(name)
+        for rule in (local, boundary, distinction, "unaffected", "evidence"):
+            assert rule in prompt, (name, rule)
+
+
+def test_reviewers_consolidate_roots_and_require_residual_failure():
+    for name in ("spec-reviewer.md", "plan-reviewer.md", "task-reviewer.md"):
+        prompt = _prompt(name)
+        for rule in (
+            "same obligation, root defect, and failure",
+            "Keep independently resolvable failures separate",
+            "revised candidate anchor",
+            "concrete residual candidate-conforming failure",
+            "Not adopting your proposed remedy is not a residual failure",
+            "New evidence or a failure introduced by the actual delta remains admissible",
+        ):
+            assert rule in prompt, (name, rule)
+
+
+def test_host_review_protocol_defers_semantic_ownership_to_main_roles():
+    for stage in ("spec", "plan", "tasks"):
+        prompt = _main_role_rule(stage)
+        assert "Main owns applicability, adoption, remedy, and readiness" in prompt
+        assert "loaded role's decision and upstream-return rules" in prompt
+        assert "reviewer recommendation never controls the remedy or route" in prompt
+        assert "actual changed passages or packets" in prompt
+        assert "Return to Spec only when" not in prompt
+        assert "Return to Plan only when" not in prompt

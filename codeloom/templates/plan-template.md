@@ -8,13 +8,15 @@ Use this as a flexible delivery guide, not a checklist or schema. A completed Pl
 
 ## 1. Design Basis and Route
 
-State the accepted results, prohibited consequences, scope boundaries, confirmed decisions, and only the current-project or external facts that change the design. Explain what the evidence proves, why it applies, and where it remains insufficient; do not reproduce the full Spec or inventory the repository.
+State the accepted results, prohibited consequences, current delivery boundaries, confirmed decisions, and only the current-project or external facts that change the design. Explain what the evidence proves, why it applies, and where it remains insufficient; do not reproduce the full Spec or inventory the repository. A future concern or proposed mechanism is not an additional current obligation. Preserve accepted technical properties and cost boundaries when changing mechanisms.
 
 Summarize the target capability model and the overall current-to-target route. Existing paths are not automatically correct design. Make readable which behavior is preserved as evidenced correct coverage, which target change reuses, extends, corrects, replaces, or adds a responsibility, and which real difference remains intentionally separate. These are design judgments, not required status fields.
 
 ## 2. Business Implementation Design
 
-Organize the Plan around coherent capabilities or mechanisms, not technical layers, pages, tables, APIs, Jobs, or files. Repeat the following design block only for material capability slices. Several accepted results may share one block; a simple closed correction may express the whole design in one concise narrative.
+Organize the Plan around coherent capabilities or mechanisms, not technical layers, pages, tables, APIs, Jobs, files, individual Spec properties, or isolated counterexamples. Group several accepted properties in one block when they share authority, lifecycle, invariant, or enforcing mechanism. Every property must be absorbed by the design, but the Artifact is not a property ledger. A simple closed correction may express the whole design in one concise narrative.
+
+The following subheadings are optional thinking aids, not required fields. Merge them when a short causal narrative is clearer; do not mechanically repeat every heading or write `N/A`.
 
 ### <Capability / Mechanism>
 
@@ -45,11 +47,15 @@ current path and semantic owner
 → protected truth, invariant, or counterexample
 ```
 
-Name a real module, service, class, API, table, query, page, Job, message, or integration only with its role in the mechanism. If the repository fact is not yet established, qualify the design recommendation and the evidence needed; do not invent a landing point.
+Name a real module, service, class, API, table, query, page, Job, message, or integration only with its role in the mechanism. Present accepted or prohibited result first, then protected truth, enforcing mechanism, concrete landing, and subordinate protocol detail. ETag, RPC/DTO shape, field names, indexes, and similar details must not replace the capability contract. If the repository fact is not yet established, qualify the design recommendation and the evidence needed; do not invent a landing point.
+
+State an excluded mechanism once only when it prevents a real misinterpretation. For a replacement or removal, explain the positive path that still guarantees the accepted properties and why its proof remains applicable. Do not repeat a blacklist or treat scope reduction as permission to move bounded work into a frequent path.
+
+Keep the selected design internally consistent after corrections: replace superseded decisions rather than append exceptions, and explain the smallest sufficient correction through the protected property and proportionate lifecycle cost, not a review transcript.
 
 #### Material cross-layer design
 
-A technical surface is material when omitting it would let implementation choose a fact meaning, state transition, permission, external consequence, consistency rule, evolution boundary, cost boundary, or proof interpretation that can change correctness. Design every triggered surface concretely and omit the rest.
+A technical surface is material when omitting it would let implementation choose a fact meaning, state transition, permission, external consequence, consistency rule, evolution boundary, cost boundary, or proof interpretation that can change correctness. The following surfaces are omission prompts, not required layer fields or a capability-by-layer matrix. Combine related surfaces in one causal explanation when that is clearer, design every triggered surface concretely, and omit the rest.
 
 When applicable, include only the decisions this mechanism needs:
 
@@ -57,10 +63,9 @@ When applicable, include only the decisions this mechanism needs:
 - **Command/query/API/RPC/Job:** owner and consumers, inputs, results and refusals, state effects, re-entry, duplicate, timeout, retry, and terminal meaning.
 - **Data/schema/read model:** authority, relations and keys, history or snapshot meaning, states and constraints, write owner, migration/backfill, and read projection.
 - **SQL/DAO/query:** filter intersection, empty-set behavior, deduplication, aggregation, pagination, batch loading, and index direction where they protect correctness or a stated cost boundary.
-- **Module/code responsibility:** existing semantic owner, justified new boundary, dependency direction, and responsibilities that cannot be duplicated or bypassed.
+- **Module/code responsibility:** existing semantic owner, justified new boundary, dependency direction, and responsibilities that cannot be duplicated or bypassed. Where validation spans offline preparation, startup, and requests, assign each check, bind earlier proof to the consumed input, and justify repeated checks by the residual failure they prevent.
 - **Transaction/concurrency/idempotency/integration:** atomic boundary, competing writes, conditional transition or lock, business idempotency identity, message/callback correlation, delivery/order/duplicate behavior, external unknown result, and recovery owner.
-- **Performance/evolution/observability:** only the material scale, latency, fan-out, compatibility, rollout/rollback, audit, logs, metrics, alerts, or correlation tied to this mechanism.
-- **Verification design:** future evidence for normal and prohibited results plus applicable permission, duplicate, concurrent, asynchronous, migration, recovery, and performance scenarios; state what each observation can and cannot prove.
+- **Performance/evolution/observability:** follow the real entry through loading, computation, transport, and response for material hit/miss paths. State each expensive operation's lifecycle, frequency, scale, what is avoided, and what remains input-sized. Include compatibility, rollout/rollback, or observation only where the mechanism requires it.
 
 UI, contracts, code ownership, stored state, queries, Jobs, messages, external results, diagrams, and proof must use the same facts, states, owners, and terminal meanings.
 
@@ -77,14 +82,14 @@ Choose a relationship, state, sequence, or activity diagram that exposes the act
 
 #### Scenario evidence
 
-<Show representative `input facts → action → persisted fact/state → external result or failure → next action allowed/rejected → observable result`. Include the success chain, the Spec-prohibited chain, and only applicable duplicate, authorization, concurrency, asynchronous, migration, failure, or recovery chains. Static existence of a surface or HTTP success is not proof of a business result.>
+<Show representative `input facts → action → persisted fact/state → external result or failure → next action allowed/rejected → observable result`. Choose the smallest observation that distinguishes the accepted result from its material counterexample. Identify the actual input and entry, the observation's limit, and necessary controllable inputs or observable outputs the implementation must supply. Separate applicable shared-platform guarantees from proof of this change's integration; neither repeat all platform tests nor assume correct integration from framework presence. Static existence of a surface or HTTP success is not proof of a business result.>
 
 ## 3. Shared Cross-Block Decisions
 
-Collect a schema, permission, contract, transaction, middleware, migration, performance, observability, or verification decision here only when several design blocks genuinely share it. For each shared decision, identify the participating mechanisms and the facts or invariants it protects. Do not introduce technical surfaces here that have no explained role in a design block.
+Collect a schema, activation, permission, contract, transaction, middleware, migration, performance, observability, or verification decision here only when several design blocks genuinely share it and doing so reduces repetition. State each shared design once, identify the participating mechanisms and protected facts or invariants, and let each capability block describe only its use and local difference. Do not duplicate the shared design or build a capability-by-layer table. Do not introduce technical surfaces here that have no explained role in a design block.
 
 ## 4. Evidence and Implementation Freedom
 
-Distinguish established project facts, evidence-backed recommendations, bounded validation assumptions, and evidence gaps. A missing fact that prevents a correct model, mechanism, or landing must be resolved before presenting a final Plan; do not hide it in an assumption or unknown section. Keep ordinary reversible choices open only when they cannot change the accepted result, model, protected truth, public/data contract, consistency, evolution, or proof meaning.
+Distinguish established project facts, evidence-backed recommendations, bounded validation assumptions, and evidence gaps. A missing fact that prevents a correct model, mechanism, or landing must be resolved before presenting a final Plan; do not hide it in an assumption or unknown section. The selected design must let Tasks slice the work without choosing a material design semantic. Missing requirement meaning cannot be repaired by inventing a design premise. Keep ordinary reversible choices open only when they cannot change the accepted result, model, protected truth, public/data contract, consistency, evolution, or proof meaning.
 
 Do not write task slicing, file lists, execution order, function bodies, DDL or source patches, commands, executed-test claims, release conclusions, or operational runbooks.

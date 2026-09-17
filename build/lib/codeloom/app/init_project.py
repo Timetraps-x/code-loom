@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
 from codeloom.app.claude_plugin import install_claude_skills
 from codeloom.app.managed_projection import initialize_claude_projection
+from codeloom.kernel.snapshots import git_environment
 
 from codeloom.persistence.sqlite import SQLiteStore
 
@@ -79,12 +83,6 @@ DEFAULT_POSITIVE_CASE_NAMES = (
 )
 
 DEFAULT_AGENT_NAMES = (
-    "spec-analyzer.md",
-    "plan-architect.md",
-    "task-planner.md",
-    "builder.md",
-    "verifier.md",
-    "release-analyzer.md",
     "code-reviewer.md",
     "adopt-expert.md",
     "spec-reviewer.md",
@@ -104,22 +102,35 @@ class ProjectConfig:
     frameworks: tuple[str, ...] = ()
     modules: tuple[str, ...] = ()
     commands: dict[str, str] = field(default_factory=lambda: {"test": "", "lint": "", "typecheck": "", "build": ""})
+    git_repositories: tuple[str, ...] | None = None
+    git_repositories_error: str = ""
 
-def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None, language: str = "en") -> tuple[bool, str]:
+def init_project(cwd: Path, force: bool = False, integrations: set[str] | None = None, language: str = "en", refresh_repositories: bool = False) -> tuple[bool, str]:
     repo_path = cwd.resolve()
     loom_dir = repo_path / ".loom"
     loom_dir.mkdir(parents=True, exist_ok=True)
     selected_integrations = integrations or {"claude-code"}
     default_runtime = "claude-code" if "claude-code" in selected_integrations else "mock"
     project_path = loom_dir / "project.yml"
-    if project_path.exists() and not force:
-        created = False
-    else:
-        project_path.write_text(
-            _default_project_yml(language, default_runtime, selected_integrations),
-            encoding="utf-8",
-        )
-        created = True
+    previous = project_path.read_bytes().decode("utf-8") if project_path.exists() else ""
+    git_section = _git_configuration(previous)
+    repositories = None
+    if refresh_repositories or not git_section:
+        repositories = _discover_git_repositories(repo_path)
+        if refresh_repositories and not repositories:
+            raise ValueError("repository refresh requires the project directory to be an outer Git root")
+    created = not project_path.exists() or force
+    content = _default_project_yml(language, default_runtime, selected_integrations) if created else previous
+    if created and git_section:
+        content = content.rstrip() + "\n\n" + git_section
+    if repositories:
+        newline = "\r\n" if "\r\n" in content else "\n"
+        replacement = newline.join(["git:", "  repositories:",
+                                    *[f"    - {json.dumps(path, ensure_ascii=False)}" for path in repositories]]) + newline
+        existing = _git_configuration(content)
+        content = content.replace(existing, replacement, 1) if existing else content.rstrip("\r\n") + newline * 2 + replacement
+    if content != previous:
+        project_path.write_bytes(content.encode("utf-8"))
     (loom_dir / "runs").mkdir(parents=True, exist_ok=True)
     _initialize_templates(repo_path, force=force)
     _initialize_constitution(repo_path)
@@ -130,6 +141,46 @@ def init_project(cwd: Path, force: bool = False, integrations: set[str] | None =
         written_agents = _initialize_claude_agents(repo_path, force=force)
         initialize_claude_projection(repo_path, written_skills | written_agents)
     return created, str(project_path)
+
+
+def _git_configuration(content: str) -> str:
+    lines = content.splitlines(keepends=True)
+    for start, line in enumerate(lines):
+        if line.startswith("git:"):
+            end = start + 1
+            while end < len(lines) and (not lines[end].strip() or lines[end].startswith((" ", "\t"))):
+                end += 1
+            return "".join(lines[start:end])
+    return ""
+
+
+def _discover_git_repositories(project: Path) -> tuple[str, ...]:
+    if not (project / ".git").exists():
+        return ()
+    excluded = {".git", ".loom", ".claude", "node_modules", "vendor", ".venv", "venv",
+                "__pycache__", ".tox", ".cache", ".pytest_cache", ".mypy_cache",
+                "build", "dist", "target", ".gradle"}
+    roots = []
+    def inaccessible(error: OSError) -> None:
+        raise ValueError(f"repository discovery could not read {error.filename}: {error.strerror}")
+    for directory, names, _ in os.walk(project, followlinks=False, onerror=inaccessible):
+        root = Path(directory)
+        names[:] = sorted(name for name in names if name not in excluded
+                          and not (root / name).is_symlink() and (root / name).resolve() == (root / name).absolute())
+        marker = root / ".git"
+        if not marker.exists():
+            continue
+        if marker.is_symlink():
+            raise ValueError(f"repository discovery does not follow symbolic Git metadata: {marker}")
+        try:
+            result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+                                    env=git_environment(), capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError(f"repository discovery failed at {root}: {exc}") from exc
+        if result.returncode or Path(os.fsdecode(result.stdout).strip()).resolve() != root.resolve():
+            raise ValueError(f"repository discovery found an invalid Git root: {root}")
+        roots.append(root.relative_to(project).as_posix())
+    return tuple(sorted(roots, key=lambda path: (len(Path(path).parts), path)))
 
 
 def _yaml_bool(value: bool) -> str:
@@ -192,16 +243,47 @@ def load_project_config(cwd: Path) -> ProjectConfig:
     constitution_path = ".loom/constitution.md"
     constitution_hash = ""
     profile = {"languages": (), "frameworks": (), "modules": ()}
+    repositories: list[str] | None = None
+    repositories_error = ""
+    repository_list = False
+    git_section_seen = False
     section: str | None = None
     for raw_line in project_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.rstrip()
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if not raw_line.startswith(" ") and stripped.endswith(":"):
-            section = stripped[:-1]
+        if not raw_line.startswith(" "):
+            section = stripped[:-1] if stripped.endswith(":") else None
+            repository_list = False
+            if stripped.startswith("git:") and stripped != "git:":
+                repositories_error = "git configuration must use an indented repositories block list"
+            if stripped == "git:":
+                if git_section_seen:
+                    repositories_error = "duplicate git configuration"
+                git_section_seen = True
             continue
-        if section == "artifacts" and stripped.startswith("root:"):
+        if section == "git":
+            if stripped.startswith("repositories:"):
+                if repositories is not None or _value(stripped):
+                    repositories_error = "git.repositories must be a single block list"
+                repositories = []
+                repository_list = True
+            elif repository_list and raw_line.startswith("    - "):
+                value = stripped[2:].strip()
+                try:
+                    if value.startswith('"'):
+                        value = json.loads(value)
+                    elif value.startswith("'"):
+                        if not value.endswith("'"):
+                            raise ValueError("unclosed repository path quote")
+                        value = value[1:-1].replace("''", "'")
+                    repositories.append(value)
+                except ValueError:
+                    repositories_error = "invalid quoted git.repositories path"
+            else:
+                repositories_error = "invalid git.repositories entry; use project-relative paths in a block list"
+        elif section == "artifacts" and stripped.startswith("root:"):
             artifact_root = _value(stripped)
         elif section == "specs" and stripped.startswith("language:"):
             spec_language = _value(stripped) or "en"
@@ -219,6 +301,8 @@ def load_project_config(cwd: Path) -> ProjectConfig:
             key, value = stripped.split(":", 1)
             if key in commands:
                 commands[key] = _clean(value)
+    if git_section_seen and repositories is None:
+        repositories_error = "git.repositories block list is missing"
     return ProjectConfig(
         artifact_root=artifact_root,
         spec_language=spec_language,
@@ -229,6 +313,8 @@ def load_project_config(cwd: Path) -> ProjectConfig:
         frameworks=profile["frameworks"],
         modules=profile["modules"],
         commands=commands,
+        git_repositories=tuple(repositories) if repositories is not None else None,
+        git_repositories_error=repositories_error,
     )
 
 
