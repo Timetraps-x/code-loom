@@ -98,49 +98,24 @@ def test_templates_preserve_coding_goal_anchors():
         assert expected in spec
 
     for expected in (
-        "flexible delivery guide, not a checklist or schema",
-        "accepted requirement → abstract model and protected truth",
-        "## 1. Design Basis and Route",
-        "## 2. Business Implementation Design",
-        "## 3. Shared Cross-Block Decisions",
-        "## 4. Evidence and Implementation Freedom",
-        "overall current-to-target route",
-        "#### Result, boundary, and counterexample",
-        "#### Abstract model and protected truths",
-        "#### Enforcing mechanism",
-        "#### Current-project landing",
-        "reuse / extend / correct / replace / add / preserve difference",
-        "protected truth, invariant, or counterexample",
-        "#### Material cross-layer design",
-        "A technical surface is material when omitting it",
-        "**UI/work surface:**",
-        "**Command/query/API/RPC/Job:**",
-        "**Data/schema/read model:**",
-        "**SQL/DAO/query:**",
-        "**Transaction/concurrency/idempotency/integration:**",
-        "UI, contracts, code ownership, stored state, queries, Jobs, messages, external results, diagrams, and proof",
-        "#### PlantUML design evidence",
-        "object relationship, cardinality, key, or authority relation",
-        "state lifecycle, legal gate, illegal transition, or recovery state",
-        "cross-system synchronous/asynchronous sequence",
-        "multi-role or multi-entry workflow",
-        "Omit it for a closed local correction",
-        "#### Scenario evidence",
-        "input facts → action → persisted fact/state",
-        "not technical layers, pages, tables, APIs, Jobs, files, individual Spec properties",
-        "Artifact is not a property ledger",
-        "optional thinking aids, not required fields",
-        "accepted or prohibited result first, then protected truth",
-        "must not replace the capability contract",
-        "Do not repeat a blacklist",
-        "omission prompts, not required layer fields",
-        "not required layer fields or a capability-by-layer matrix",
-        "State each shared design once",
-        "Do not duplicate the shared design or build a capability-by-layer table",
-        "based_on_spec_hash` identifies the accepted Spec artifact revision",
-        "does not replace readable traceability",
+        "flexible expression aid, not a design checklist or schema",
+        "## 1. Design Basis and Selected Route",
+        "## 2. Concrete Design by Capability",
+        "## 3. Evidence and Implementation Freedom",
+        "confirmed user decisions, existing design/UI assets",
+        "decisive rationale and applicability conditions",
+        "Do not present an unanswered choice as a completed design",
+        "A material surface cannot remain undecided for Tasks",
+        "UI, API/RPC, service, data, query, transaction, and integration",
+        "PlantUML relationship, state, sequence, or activity diagram",
+        "Diagrams are design evidence",
+        "A closed local correction may omit a diagram",
+        "Shared decisions may be stated once",
+        "not a substitute for readable traceability",
     ):
         assert expected in plan
+    assert "#### Material cross-layer design" not in plan
+    assert "#### Abstract model and protected truths" not in plan
 
     for forbidden in (
         "## 1. Background",
@@ -274,11 +249,11 @@ def test_release_template_defaults_to_short_prose_without_table_scaffolding():
 def test_plan_and_tasks_templates_carry_design_and_execution_handoffs():
     plan = _template("plan-template.md")
     for text in (
-        "positive path that still guarantees the accepted properties",
-        "residual failure they prevent",
-        "what is avoided, and what remains input-sized",
-        "Separate applicable shared-platform guarantees",
-        "replace superseded decisions rather than append exceptions",
+        "retain each accepted property through a positive implementation path",
+        "which actual input is validated and consumed",
+        "does not hide traversal, network, or serialization work",
+        "integration with evidenced shared guarantees",
+        "Replace superseded decisions consistently",
     ):
         assert text in plan
     tasks = _template("tasks-template.md")
@@ -303,7 +278,7 @@ def test_templates_distinguish_candidate_omissions_from_upstream_meaning():
     tasks = _template("tasks-template.md")
     assert "current delivery, an actual rollout prerequisite, and a future concern" in spec
     assert "Do not silently defer an accepted compatibility" in spec
-    assert "Missing requirement meaning cannot be repaired by inventing a design premise" in plan
+    assert "unresolved user choice or accepted requirement conflict must be resolved at its owner" in plan
     assert "A decision missing from the candidate packet is not necessarily missing from Plan" in tasks
     assert "Only when task construction would choose or change a material Plan-owned semantic" in tasks
 

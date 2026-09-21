@@ -104,17 +104,17 @@ def test_spec_analyzer_prompt_recovers_real_requirements():
         "You own the requirement semantics captured in `spec.md`",
         "incomplete, mixed, conflicting, or solution-biased human input",
         "A human request is evidence about a need, not a finished requirement",
-        "A material promise is one whose omission or reinterpretation changes whether the requested result is true",
+        "A statement is material when omitting or reinterpreting it changes",
         "Seek discriminating evidence",
         "what the source proves, what it does not prove",
-        "compare the current reality with the required reality",
+        "Compare the current reality with the required reality",
         "false completion",
         "Every material promise receives an evidence-backed judgment",
-        "Do not emit a generic unknown",
+        "Close investigable fact questions before deciding that a gap remains",
         "Retain an evidence gap only after targeted investigation",
         "the required result remains decidable without it",
         "If the missing fact prevents a correct requirement decision, stop with the needed evidence",
-        "An evidence gap describes current reality; it does not replace the requirement judgment for a material promise",
+        "Uncertainty about current reality does not replace the judgment on an accepted promise",
         "Goal, Way, and Proof as reasoning lenses, not required headings",
         "An unproven proposed method is not an Owner choice",
         "A proposed method plus missing evidence is not a pair of credible requirement directions",
@@ -128,6 +128,37 @@ def test_spec_analyzer_prompt_recovers_real_requirements():
         "proportionate, readable coverage",
         "same authority and disposition may be synthesized",
         "Do not produce technical architecture",
+    ):
+        assert expected in analyzer
+
+
+def test_spec_analyzer_prompt_connects_context_discovery_to_evidence():
+    analyzer = _prompt("spec-analyzer.md")
+    for expected in (
+        "# Recover the Needed Business Chain",
+        "# Investigate Decision-Changing Context",
+        "bound together meanings that can vary independently",
+        "smallest useful condition change and replay the affected chain",
+        "retain interacting conditions when the real situation requires them",
+        "A candidate situation is a hypothesis for investigation",
+        "not a fact, new obligation, confirmed defect, or competing Owner direction",
+        "Let evidence revise the chain and its branches",
+        "Reuse evidence while its source, conditions, and protected meaning remain applicable",
+    ):
+        assert expected in analyzer
+
+
+def test_spec_analyzer_prompt_bounds_scenario_expansion():
+    analyzer = _prompt("spec-analyzer.md")
+    for expected in (
+        "Keep a closed correction focused on its actual result and direct risk",
+        "not a fixed sequence of required nodes",
+        "When delivery or visibility is itself the agreed result",
+        "only when an accepted obligation or reachable consequence makes it necessary",
+        "If the required meaning, behavior, and proof stay the same, discard the extra branch",
+        "Neither the comparison nor the final Spec requires a role inventory, scenario matrix, or fixed scenario count",
+        "An imagined possibility is not enough to extend scope",
+        "Optional strengthening, theoretical scenarios, or lack of reviewer agreement are not reasons to continue",
     ):
         assert expected in analyzer
 
@@ -226,39 +257,28 @@ def test_plan_and_tasks_roles_preserve_properties_and_reasonable_design():
     task_reviewer = _prompt("task-reviewer.md")
 
     for expected in (
-        "Account for every material accepted property",
-        "accepted property or hard constraint from a confirmed fact and a candidate mechanism",
-        "Read-only consumption, derived status, paths, search",
-        "complete and proportionate design",
-        "adequacy and necessity",
-        "retain, extend, correct, replace, or add",
-        "Duplicate protection needs a residual failure",
-        "Existing complexity is not justified merely because it already exists",
-        "Mechanism deletion must not silently become property deletion",
-        "data actually published and consumed",
-        "startup | refresh | write | request | background",
-        "O(1) reference access does not make an entire request O(1)",
-        "Class, method, field, and DTO naming",
-        "not a required property ledger",
-        "repeated mechanism blacklists",
-        "The theoretical possibility",
+        "complete, proportionate first design",
+        "accepted obligation from a confirmed fact and a candidate mechanism",
+        "Read-only consumption, derived status",
+        "adequacy and necessity from its first draft",
+        "Duplicate protection needs a concrete residual failure",
+        "positive path that still carries it",
+        "input actually published and used",
+        "O(1) reference access does not make input-sized",
+        "not a mechanism blacklist",
     ):
         assert expected in plan
 
     for expected in (
-        "exact candidate text and supplied identity",
-        "minimum complete and proportionate design obligations",
-        "non-optional obligation",
-        "smallest candidate-conforming counterexample",
-        "not a full alternative design",
-        "parallel set of tables, fields, DTOs, APIs, Jobs, components, state machines",
-        "retained or extended existing mechanism",
-        "replacement loses an accepted property or proof",
-        "O(1) reference access does not hide",
-        "validate A but publish or consume B",
+        "exact candidate body or hash-checked copy and review identity",
+        "independent baseline is the current demand",
+        "promises that the candidate added itself",
+        "candidate-conforming failure or unsupported material cost",
+        "smaller design discard an accepted property",
+        "Evidence for input A does not prove input B",
         "not stage approval",
-        "Review only finding closure, the real delta",
-        "Missing ideal evidence is not a challenge",
+        "finding closure, the real delta",
+        "missing an ideal fixture or preferred tool is not missing product design",
     ):
         assert expected in plan_reviewer
 
@@ -438,15 +458,14 @@ def test_stage_main_role_prompt_eval_ask_user_question_bad_cases():
             surface=_prompt("spec-analyzer.md"),
             badcase="spec agent guesses an unresolved requirement choice or asks the Owner to decide implementation details",
             required_guardrails=(
-                "Resolve investigable facts before requesting an Owner choice",
+                "Close investigable fact questions before deciding that a gap remains",
                 "An unproven proposed method is not an Owner choice",
                 "Request one Owner decision only",
                 "accepted input or authoritative evidence independently establishes incompatible current requirement meanings or business rules",
                 "choice changes the required result, scope, acceptance meaning",
-                "the unresolved choice, credible directions and consequences",
-                "the best-supported recommendation",
-                "Do not ask the Owner to choose ordinary implementation details or compensate for missing evidence",
-                "If an unresolved Owner choice still changes requirement correctness, stop with that clarification",
+                "Present the established facts, credible directions, consequences, and best-supported recommendation",
+                "Do not ask the Owner to decide an investigable fact or ordinary implementation detail",
+                "A genuine unresolved requirement choice still prevents a final Spec",
             ),
         ),
         PromptEvalCase(
@@ -454,14 +473,14 @@ def test_stage_main_role_prompt_eval_ask_user_question_bad_cases():
             surface=_prompt("plan-architect.md"),
             badcase="plan agent sends ordinary choices to the user or applies an Owner answer to only one technical projection",
             required_guardrails=(
-                "Resolve ordinary local, reversible technical choices through an evidence-backed recommendation",
-                "An unconfirmed fact with a locatable repository, runtime, or external source is an evidence gap",
-                "Request one Owner decision only after investigating every locatable source that can distinguish the direction",
-                "accepted semantics and remaining evidence support incompatible directions",
-                "a reasonable technical recommendation cannot decide",
-                "public or data-contract meaning, irreversible migration",
-                "Present the established facts, affected model and mechanism",
-                "Re-derive every affected design element after the decision",
+                "Investigate locatable facts before asking the user",
+                "Use `AskUserQuestion` when viable routes differ",
+                "A reversible or low-risk choice can still require that decision",
+                "Having a recommendation does not authorize Main to choose the user's preference",
+                "Do not ask the user to choose complexity",
+                "Ordinary equivalent engineering details",
+                "Apply the answer before proceeding: re-derive the affected model",
+                "Do not reopen a settled choice without new evidence or an explicit change",
             ),
         ),
         PromptEvalCase(
@@ -765,7 +784,7 @@ def test_main_roles_carry_semantic_continuity_without_kernel_logic():
     assert "delivered and proven" in release
     assert "human assertion" in release
     assert "source-derived property" in task_planner
-    assert "Mechanism deletion must not silently become property deletion" in plan_architect
+    assert "does not authorize deleting an accepted business or technical property" in plan_architect
 
     for prompt in (builder, reviewer, verifier, release, task_planner, plan_architect):
         for forbidden in ("Kernel", "SQLite", "runtime_refs", "temporary Claude Code child agent"):
@@ -798,10 +817,10 @@ def test_plan_reviewer_receives_identified_candidate_draft():
     host_rule = _main_role_rule("plan")
 
     for expected in (
-        "exact candidate text and supplied identity",
-        "State which identity the review inspects",
+        "exact candidate body or hash-checked copy and review identity",
+        "State which identity you inspect",
         "input_missing_or_mismatched",
-        "rather than inferring it from an on-disk artifact",
+        "rather than inferring another candidate from disk",
     ):
         assert expected in reviewer
 
@@ -832,8 +851,8 @@ def test_plan_host_delegation_keeps_child_evidence_bounded():
     ):
         assert expected in host_rule
 
-    assert "Request one Owner decision only after investigating" in architect
-    assert "Do not manufacture an Owner question for an investigable fact" in reviewer
+    assert "Investigate locatable facts before asking the user" in architect
+    assert "Do not demand a question for equivalent implementation details or facts Main can investigate" in reviewer
 
     for prompt in (architect, reviewer):
         for forbidden in ("temporary Claude Code child agent", "artifact_file", "Kernel", "workflow state"):
@@ -845,21 +864,19 @@ def test_plan_prompts_select_analysis_models_for_material_relationships():
     reviewer = _prompt("plan-reviewer.md")
 
     for expected in (
-        "PlantUML",
-        "material object relationship or cardinality",
-        "state lifecycle or illegal transition",
-        "cross-system synchronous/asynchronous sequence",
+        "Use PlantUML",
+        "relationship, cardinality, state transition, cross-system sequence",
         "multi-role workflow",
-        "A closed local correction may omit diagrams",
-        "A diagram is design evidence, not decoration or a quota",
+        "closed local correction may omit them",
+        "design evidence, not decoration or a quota",
     ):
         assert expected in architect
 
     for expected in (
-        "minimum complete and proportionate design obligations",
+        "independent baseline is the current demand",
         "smallest reasonable implementation that fully follows the candidate",
-        "concrete failure or material cost",
-        "Require a concrete surface only when its absence",
+        "candidate-conforming failure or unsupported material cost",
+        "Missing a preferred heading, class, table, endpoint, index, diagram, or mechanism is not itself a defect",
     ):
         assert expected in reviewer
 
@@ -921,25 +938,24 @@ def test_ship_summarizes_existing_conclusions_without_another_audit():
 def test_plan_design_connects_project_path_validation_and_proof():
     plan = _prompt("plan-architect.md")
     for text in (
-        "Develop each capability as one connected decision",
-        "actual entry, current data, authoritative owner, integration contract",
-        "positive replacement path for every still-accepted property",
-        "assign each check to the boundary that can enforce its truth",
-        "Repeat a check only for a concrete residual failure",
-        "expensive work avoided and input-dependent work remaining",
-        "Separate an existing shared guarantee from this change's integration",
-        "Tasks allocates the implementation and verification work",
-        "Existing-environment discovery and reversible local setup are not missing product design",
-        "without deleting an obligation",
+        "actual entry, current data, semantic owner, integration boundary",
+        "positive path that still carries it",
+        "Place work at the boundary that owns its truth",
+        "Duplicate protection needs a concrete residual failure",
+        "before and after work at startup, refresh, write, request, or background time",
+        "shared-platform guarantees within their conditions and prove this change's integration",
+        "Tasks allocates the work",
+        "Existing environment discovery and reversible setup are not missing product design",
+        "waive necessary proof",
     ):
         assert text in plan
     reviewer = _prompt("plan-reviewer.md")
     for text in (
-        "cheap final response while still doing the expensive upstream work",
-        "validate A but publish or consume B",
-        "without a residual failure",
-        "functioning framework can coexist with a wrongly wired caller",
-        "not merely an unspecified fixture or preferred tool",
+        "cheap final comparison does not hide input-sized upstream work",
+        "Evidence for input A does not prove input B",
+        "repeating validation needs a residual failure",
+        "does not establish the necessary integration",
+        "missing an ideal fixture or preferred tool is not missing product design",
     ):
         assert text in reviewer
 
@@ -973,13 +989,13 @@ def test_tasks_assign_preparation_and_simulate_usable_handoffs():
 def test_plan_review_corrections_remain_main_design_decisions():
     plan = _prompt("plan-architect.md")
     reviewer = _prompt("plan-reviewer.md")
-    assert "cited obligation and failure scenario apply to the current candidate" in plan
+    assert "check its source, scenario, and applicability" in plan
     assert "smallest sufficient correction" in plan
-    assert "without dropping an accepted property" in plan
-    assert "whole design's invariants and lifecycle cost" in plan
-    assert "replacing superseded decisions" in plan
-    assert "A proposed mechanism is not an accepted obligation" in reviewer
-    assert "not whether Main adopted your proposed solution" in reviewer
+    assert "does not authorize deleting an accepted business or technical property" in plan
+    assert "update dependent interfaces, states, diagrams, and proof together" in plan
+    assert "Replace superseded decisions instead of accumulating exceptions" in plan
+    assert "Main can accept a defect while rejecting a prescribed remedy" in reviewer
+    assert "not adopting that remedy is not a residual failure" in reviewer
 
 
 def test_tasks_balance_split_value_and_prerequisite_timing():
@@ -1009,10 +1025,10 @@ def test_adopt_does_not_own_repository_scope_discovery():
 
 def test_stage_ownership_has_local_correction_and_genuine_return_converses():
     pairs = (
-        ("spec-analyzer.md", "Technical possibility alone does not establish current scope",
-         "Preserve an explicitly accepted obligation", "Missing model, mechanism, integration"),
-        ("plan-architect.md", "Repair it here",
-         "Return to Spec only when", "Owner-bearing technical choice within Plan"),
+        ("spec-analyzer.md", "A hypothetical future operation does not authorize new",
+         "do not silently defer it to simplify the work", "Missing model, mechanism, integration"),
+        ("plan-architect.md", "Repair design defects within Plan",
+         "Return to Spec only when", "A choice inside the accepted requirement is Plan work"),
         ("task-planner.md", "Repair those defects in Tasks",
          "Return to Plan only when", "decision merely absent from your candidate packet"),
     )
@@ -1025,14 +1041,24 @@ def test_stage_ownership_has_local_correction_and_genuine_return_converses():
 def test_reviewers_consolidate_roots_and_require_residual_failure():
     for name in ("spec-reviewer.md", "plan-reviewer.md", "task-reviewer.md"):
         prompt = _prompt(name)
-        for rule in (
+        rules = (
             "same obligation, root defect, and failure",
             "Keep independently resolvable failures separate",
-            "revised candidate anchor",
-            "concrete residual candidate-conforming failure",
-            "Not adopting your proposed remedy is not a residual failure",
-            "New evidence or a failure introduced by the actual delta remains admissible",
-        ):
+        )
+        if name == "plan-reviewer.md":
+            rules += (
+                "concrete residual failure at the revised anchor",
+                "not adopting that remedy is not a residual failure",
+                "New delta-introduced failures remain admissible",
+            )
+        else:
+            rules += (
+                "revised candidate anchor",
+                "concrete residual candidate-conforming failure",
+                "Not adopting your proposed remedy is not a residual failure",
+                "New evidence or a failure introduced by the actual delta remains admissible",
+            )
+        for rule in rules:
             assert rule in prompt, (name, rule)
 
 
@@ -1045,3 +1071,24 @@ def test_host_review_protocol_defers_semantic_ownership_to_main_roles():
         assert "actual changed passages or packets" in prompt
         assert "Return to Spec only when" not in prompt
         assert "Return to Plan only when" not in prompt
+
+
+def test_plan_method_forms_a_first_design_before_review_repair():
+    plan = _prompt("plan-architect.md")
+    assert plan.index("# Understand the Work") < plan.index("# Form Viable Routes")
+    assert plan.index("# Form Viable Routes") < plan.index("# Make the Selected Route Implementable")
+    assert plan.index("# Make the Selected Route Implementable") < plan.index("# Check the First Design")
+    for text in (
+        "preventing unsupported responsibilities in the first draft is the goal",
+        "presence in one flow does not make them one atomic outcome",
+        "Ask before committing to one route",
+        "Complexity is derived after the direction is chosen",
+        "A user-confirmed mechanism is a real constraint",
+        "Preserve unaffected wording, decisions, and assets",
+        "If the answer would change or contradict accepted Spec",
+        "the reviewer is not responsible for turning an oversized or incomplete first draft",
+    ):
+        assert text in plan
+    host = _main_role_rule("plan")
+    assert "use AskUserQuestion before registration" in host
+    assert "generic operation lifecycle" not in host

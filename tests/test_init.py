@@ -336,10 +336,10 @@ def test_bundled_agent_and_role_resources_are_packaged():
         if agent_name in STAGE_ROLE_RESPONSIBILITIES:
             assert STAGE_ROLE_RESPONSIBILITIES[agent_name] in content
             if agent_name == "spec-analyzer.md":
-                assert "# Recover the Complete Current Demand" in content
+                assert "# Recover the Needed Business Chain" in content
                 assert "incomplete, mixed, conflicting, or solution-biased human input" in content
                 assert "Seek discriminating evidence" in content
-                assert "compare the current reality with the required reality" in content
+                assert "# Investigate Decision-Changing Context" in content
                 assert "Every material promise receives an evidence-backed judgment" in content
                 assert "Goal, Way, and Proof as reasoning lenses, not required headings" in content
                 assert "Produce a coherent, user-facing `spec.md`" in content
@@ -352,17 +352,17 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 if agent_name not in {"plan-architect.md", "task-planner.md", "release-analyzer.md"}:
                     assert "bounded clarification" in content
             if agent_name == "plan-architect.md":
-                assert "target business implementation model and its concrete landing" in content
-                assert "Account for every material accepted property" in content
-                assert "# Select a complete and proportionate design" in content
-                assert "adequacy and necessity" in content
-                assert "concrete failure without it" in content
-                assert "Mechanism deletion must not silently become property deletion" in content
-                assert "The theoretical possibility" in content
-                assert "startup | refresh | write | request | background" in content
-                assert "Use the smallest useful PlantUML diagram" in content
-                assert "A closed local correction may omit diagrams" in content
-                assert "Produce a readable, self-evidencing `plan.md`" in content
+                assert "business implementation model to its concrete landing" in content
+                assert "complete, proportionate first design" in content
+                assert "# Form Viable Routes and Resolve Meaningful Choices" in content
+                assert "Use `AskUserQuestion` when viable routes differ" in content
+                assert "A reversible or low-risk choice can still require that decision" in content
+                assert "Do not ask the user to choose complexity" in content
+                assert "adequacy and necessity from its first draft" in content
+                assert "positive path that still carries it" in content
+                assert "Use PlantUML" in content
+                assert "closed local correction may omit them" in content
+                assert "Produce readable `plan.md`" in content
                 assert "tools:" not in content
                 assert "artifact_file" not in content
                 assert "Kernel" not in content
@@ -446,13 +446,13 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 assert "re-review only prior material finding closure" in content
                 assert "leave the final requirement judgment to `spec-analyzer`" in content
             elif agent_name == "plan-reviewer.md":
-                assert "bounded, adversarial reviewer supporting the current Main acting in the `plan-architect` role" in content
-                assert "minimum complete and proportionate design obligations" in content
-                assert "retained or extended existing mechanism" in content
-                assert "candidate-conforming implementation" in content
-                assert "O(1) reference access does not hide" in content
-                assert "Review only finding closure, the real delta" in content
-                assert "do not rewrite the Plan, select a replacement architecture" in content
+                assert "bounded, adversarial reviewer supporting Main" in content
+                assert "independent baseline is the current demand" in content
+                assert "candidate-conforming failure or unsupported material cost" in content
+                assert "user-owned choices" in content
+                assert "cheap final comparison does not hide input-sized upstream work" in content
+                assert "finding closure, the real delta" in content
+                assert "do not rewrite the Plan or choose a replacement architecture" in content
             elif agent_name == "task-reviewer.md":
                 assert "bounded, adversarial reviewer supporting the current Main acting in the `task-planner` role" in content
                 assert "exact candidate text and supplied candidate identity" in content

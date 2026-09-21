@@ -35,3 +35,4 @@ specs/
 /tests/test_spec_evals.py
 /tests/test_behavioral_evals.py
 /tests/test_stage_prompt_closure.py
+/tests/test_plan_decision_evals.py
