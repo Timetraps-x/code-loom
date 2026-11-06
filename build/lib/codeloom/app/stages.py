@@ -1743,22 +1743,17 @@ class StageRunner:
                 recommended_task_id=task.task_id,
                 errors=["invalid_review_status"],
             )
-        existing = context.store.review_for_seal(attempt_id, seal_revision)
-        if existing is not None:
-            if existing.get("status") == status and existing.get("sealed_tree") == sealed_tree:
-                return KernelResponse(
-                    status="ok",
-                    message="review already recorded for latest sealed attempt changes",
-                    recommended_next=self._recommended_do(task.task_id),
-                    recommended_task_id=task.task_id,
-                    extras={"attempt_id": attempt_id, "seal_revision": seal_revision, "review_record_id": existing["id"]},
-                )
+        supersedes_value = context.request.args.get("supersedes_review_id")
+        try:
+            supersedes_review_id = int(supersedes_value) if supersedes_value is not None else None
+            if supersedes_review_id is not None and supersedes_review_id <= 0:
+                raise ValueError
+        except ValueError:
             return KernelResponse(
                 status="failed",
-                message="review verdict is already recorded for this sealed revision",
+                message="supersedes_review_id must identify the prior review record",
                 recommended_next=self._recommended_do(task.task_id),
-                recommended_task_id=task.task_id,
-                errors=["review_already_recorded"],
+                errors=["invalid_supersedes_review_id"],
             )
         summary, summary_error = self._review_summary_content(context, task, status, seal_revision)
         if summary_error is not None:
@@ -1773,16 +1768,26 @@ class StageRunner:
                 None,
                 summary_hash,
                 summary,
+                supersedes_review_id=supersedes_review_id,
             )
         except ValueError as exc:
-            if str(exc) != "review_already_recorded":
+            error = str(exc)
+            messages = {
+                "review_already_recorded": "review changed or supersedes_review_id does not identify the current review",
+                "attempt_not_running": "attempt is no longer running",
+                "seal_revision_mismatch": "review must be recorded for the latest sealed attempt changes",
+            }
+            if error not in messages:
                 raise
+            current_review = context.store.review_for_seal(attempt_id, seal_revision)
             return KernelResponse(
-                status="failed",
-                message="review verdict is already recorded for this sealed revision",
+                status="blocked" if error == "seal_revision_mismatch" else "failed",
+                message=messages[error],
                 recommended_next=self._recommended_do(task.task_id),
                 recommended_task_id=task.task_id,
-                errors=["review_already_recorded"],
+                extras={"attempt_id": attempt_id, "seal_revision": seal_revision,
+                        "review_record_id": (current_review or {}).get("id")},
+                errors=[error],
             )
         recorded_review = context.store.review_for_seal(attempt_id, seal_revision)
         authoritative_summary_ref = (recorded_review or {}).get("summary_ref")
@@ -1803,7 +1808,7 @@ class StageRunner:
             },
         )
 
-    def _build_seal_changes_gate(self, context: StageContext, attempt: dict[str, Any], task: TaskDefinition, attempt_id: int) -> KernelResponse | None:
+    def _build_seal_changes_gate(self, context: StageContext, attempt: dict[str, Any], task: TaskDefinition, attempt_id: int) -> KernelResponse | tuple[int, int, str]:
         latest_revision = int(attempt.get("latest_seal_revision") or 0)
         latest_sealed_tree = str(attempt.get("latest_sealed_tree") or "")
         if latest_revision <= 0 or not latest_sealed_tree:
@@ -1848,7 +1853,7 @@ class StageRunner:
                         else {"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)}),
                 errors=["sealed_evidence_integrity_error"],
             )
-        review = context.store.review_for_seal(attempt_id, latest_revision)
+        review = seal.get("review")
         if review is None:
             return KernelResponse(
                 status="blocked",
@@ -1900,7 +1905,7 @@ class StageRunner:
                 },
                 errors=["sealed_changes_stale"],
             )
-        return None
+        return int(review["id"]), latest_revision, latest_sealed_tree
 
     def _seal_changes_recovery(self, attempt_id: int, rerun_reviewer: bool) -> dict[str, Any]:
         return {
@@ -2120,10 +2125,12 @@ class StageRunner:
                 errors=["completion_conflict"],
             )
 
+        review_identity = None
         if task.lane == "build" and final_status == "implemented":
             gate = self._build_seal_changes_gate(context, attempt, task, attempt_id)
-            if gate is not None:
+            if isinstance(gate, KernelResponse):
                 return gate
+            review_identity = gate
         if candidate.get("version") == "2" and has_candidate_args:
             for kind in ("stdout", "stderr"):
                 output = str(context.request.args.get(kind) or "")
@@ -2145,7 +2152,17 @@ class StageRunner:
             candidate_ref,
             completion_token,
             candidate_content if candidate.get("version") == "2" else None,
+            review_identity=review_identity,
         )
+        if claim == "review_changed":
+            return KernelResponse(
+                status="noop",
+                message="sealed review changed before completion; resume the current attempt",
+                recommended_next=self._recommended_do(task.task_id),
+                recommended_task_id=task.task_id,
+                extras={"attempt_id": attempt_id, "task_id": task.task_id},
+                errors=["review_changed"],
+            )
         if claim == "completed":
             self._invalidate_latest_attempts(context)
             recommendation = self._next_task_recommendation(context, tasks)
@@ -2294,13 +2311,13 @@ class StageRunner:
             )
             return KernelResponse(
                 status="ok" if ship_packet["status"] == "ready" else "blocked",
-                message=f"release.md is current: {ship_packet['status']}",
+                message=f"release.md is current; evidence checks: {ship_packet['status']}",
                 recommended_next=None,
                 artifact_paths=[context.artifacts.relative(context.artifacts.path_for("ship"))],
                 findings=list(ship_packet["open_findings"]),
                 extras={
                     "mechanical_state": "complete",
-                    "release_status": ship_packet["status"],
+                    "evidence_status": ship_packet["status"],
                     "ship_input_hash": ship_input_hash,
                     "idempotent": True,
                 },
@@ -2388,13 +2405,13 @@ class StageRunner:
         )
         return KernelResponse(
             status="ok" if ship_status == "ready" else "blocked",
-            message=f"release.md generated: {ship_status}",
+            message=f"release.md registered; evidence checks: {ship_status}",
             recommended_next=None,
             artifact_paths=[context.artifacts.relative(path)],
             findings=list(ship_packet["open_findings"]),
             extras={
                 "mechanical_state": "complete",
-                "release_status": ship_status,
+                "evidence_status": ship_status,
                 "ship_input_hash": ship_input_hash,
             },
         )

@@ -103,14 +103,14 @@ def test_templates_preserve_coding_goal_anchors():
         "## 2. Concrete Design by Capability",
         "## 3. Evidence and Implementation Freedom",
         "confirmed user decisions, existing design/UI assets",
-        "decisive rationale and applicability conditions",
+        "decisive sources, rationale, and applicability conditions",
         "Do not present an unanswered choice as a completed design",
         "A material surface cannot remain undecided for Tasks",
         "UI, API/RPC, service, data, query, transaction, and integration",
         "PlantUML relationship, state, sequence, or activity diagram",
         "Diagrams are design evidence",
         "A closed local correction may omit a diagram",
-        "Shared decisions may be stated once",
+        "State shared decisions once",
         "not a substitute for readable traceability",
     ):
         assert expected in plan
@@ -137,7 +137,7 @@ def test_templates_preserve_coding_goal_anchors():
         "implementation result chain",
         "Task execution identity is expressed by `Tn`, title, `Lane`, `Complexity`, and `Revision`",
         "Revision protects execution meaning, not Markdown wording",
-        "Planner's recommendation, not a runtime dependency graph or runnable gate",
+        "list order recommends a path while declared inputs determine eligibility",
         "Do not split mechanically by file, class, function, page, API, table, or technical layer",
         "accepted Plan already supplies the material result, boundary, current-project landing, protected invariant, and proof direction",
         "return the smallest design gap before producing final tasks",
@@ -154,7 +154,9 @@ def test_templates_preserve_coding_goal_anchors():
         "cannot be the sole source of task context",
         "A Plan reference provides traceability but cannot be the only source of a material state, transition, concurrency outcome, external-effect guard, stop, or proof obligation",
         "a fact whose answer would change the Plan mechanism or safe slicing returns as the smallest Plan evidence gap",
-        "prove its real creation entry and prohibited repeated or terminal re-entry",
+        "prove its real creation entry instead of relying only on a pre-seeded intermediate state",
+        "Cover repeated or terminal re-entry according to the accepted behavior when material",
+        "an allowed repeated operation needs no invented rejection rule",
     ):
         assert expected in tasks
 
@@ -163,13 +165,14 @@ def test_templates_preserve_coding_goal_anchors():
         "Delivery Conclusion",
         "Release readiness: ready | blocked",
         "Goal result confidence: proven | partially_proven | not_proven",
-        "delivered user or system result",
+        "State the observable change and its important boundary",
         "Verification and Limitations",
-        "Do not make completed tasks or successful commands stand in for goal achievement",
+        "Set confidence from the evidence for the accepted results",
+        "Connect the recorded observations to the delivered results",
         "Release Notes, When Needed",
-        "only material release actions or cautions",
-        "Do not invent owners, timing, action completion, or risk acceptance",
-        "Keep the actual release-owner decision separate",
+        "Mention material release actions or cautions",
+        "Use only recorded owners, timing, completed actions, and risk-acceptance decisions",
+        "The release owner decides actual merge, deployment, rollout, and risk acceptance",
         "compact evidence references beside the claims",
     ):
         assert expected in release
@@ -225,7 +228,7 @@ def test_role_and_subagent_templates_define_ownership_contracts():
 
 def test_tasks_template_preserves_premises_without_new_schema():
     tasks = _template("tasks-template.md")
-    for text in ("accepted business or system result", "transferred result premise", "real behavior or inspection entry", "Relation reachability alone", "Missing ideal evidence alone", "labels below are examples, not required fields"):
+    for text in ("accepted business or system result", "transferred result premise", "real behavior or inspection entry", "Relation reachability alone", "missing ideal evidence alone does not block a supported slice", "labels below are examples, not required fields"):
         assert text in tasks
     main_role = _template("agent-template.md")
     assert "Dedicated Builder and Verifier prompts override" in main_role
@@ -234,13 +237,19 @@ def test_tasks_template_preserves_premises_without_new_schema():
 def test_release_template_defaults_to_short_prose_without_table_scaffolding():
     release = _template("release-template.md")
     for text in (
-        "supplied Build and Verify conclusions, not a new audit",
+        "current accepted context and recorded observations",
+        "Read the relevant accepted passages",
         "optional prose guides",
         "combine them for a small delivery",
+        "Group a larger delivery by coherent user or system results",
+        "Combine the tasks that contribute to the same result",
+        "Connect the recorded observations to the delivered results",
         "explicit recorded statement and source",
+        "practical effect of a known issue or unverified required behavior and the smallest follow-up",
+        "A proven behavior can still have an unmet release prerequisite",
         "An unmet required precondition remains blocking",
         "Omit this section when there are none",
-        "Do not produce per-property tables, task recaps, or N/A inventories",
+        "Omit per-property tables, task recaps, and N/A inventories",
     ):
         assert text in release
     assert not any(line.startswith("|") for line in release.splitlines())
@@ -253,6 +262,12 @@ def test_plan_and_tasks_templates_carry_design_and_execution_handoffs():
         "which actual input is validated and consumed",
         "does not hide traversal, network, or serialization work",
         "integration with evidenced shared guarantees",
+        "investigation of the current implementation and relevant external implementations informed the selected route",
+        "accepted or explicitly delegated direction and its consequences",
+        "carry existing decisions forward without repeated confirmation",
+        "where facts are acquired, which judgments and effects use them",
+        "make their use, applicability, and local differences clear at the consumers",
+        "continuation does not depend on chat history",
         "Replace superseded decisions consistently",
     ):
         assert text in plan

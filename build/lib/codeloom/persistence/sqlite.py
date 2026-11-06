@@ -139,12 +139,14 @@ class SQLiteStore:
         columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(review_records)").fetchall()}
         if "summary_json" not in columns:
             conn.execute("ALTER TABLE review_records ADD COLUMN summary_json TEXT")
-        if columns["summary_ref"]["notnull"]:
+        unique_seal = any(row["unique"] for row in conn.execute("PRAGMA index_list(review_records)"))
+        if columns["summary_ref"]["notnull"] or unique_seal:
             conn.execute("ALTER TABLE review_records RENAME TO review_records_legacy")
             conn.execute(next(statement for statement in SCHEMA if "CREATE TABLE IF NOT EXISTS review_records" in statement))
             fields = "id, attempt_id, seal_revision, sealed_tree, status, review_scope, summary_ref, summary_hash, summary_json, created_at"
             conn.execute(f"INSERT INTO review_records ({fields}) SELECT {fields} FROM review_records_legacy")
             conn.execute("DROP TABLE review_records_legacy")
+        conn.execute("CREATE INDEX IF NOT EXISTS review_records_seal ON review_records(attempt_id, seal_revision, id)")
 
     def get_or_create_branch_session(self, branch_name: str, branch_slug: str, artifact_root: str) -> dict[str, Any]:
         self.initialize()
@@ -728,6 +730,7 @@ class SQLiteStore:
         candidate_ref: str | None,
         candidate_hash: str,
         candidate_json: str | None = None,
+        review_identity: tuple[int, int, str] | None = None,
     ) -> str:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -739,6 +742,16 @@ class SQLiteStore:
             if candidate_json is not None and hashlib.sha256(candidate_json.encode("utf-8")).hexdigest() != token:
                 return "conflict"
             if row["status"] == "running":
+                if review_identity is not None:
+                    review_id, seal_revision, sealed_tree = review_identity
+                    review = conn.execute(
+                        "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ? ORDER BY id DESC LIMIT 1",
+                        (attempt_id, seal_revision),
+                    ).fetchone()
+                    if (row["latest_seal_revision"] != seal_revision or row["latest_sealed_tree"] != sealed_tree
+                            or review is None or review["id"] != review_id or review["status"] != "pass"
+                            or review["sealed_tree"] != sealed_tree or review["review_scope"] != "attempt_scoped"):
+                        return "review_changed"
                 conn.execute(
                     """
                     UPDATE attempts
@@ -916,18 +929,25 @@ class SQLiteStore:
         summary_ref: str | None,
         summary_hash: str,
         summary_json: str | None = None,
+        supersedes_review_id: int | None = None,
     ) -> int:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            attempt = conn.execute(
+                "SELECT status, latest_seal_revision, latest_sealed_tree FROM attempts WHERE id = ?", (attempt_id,),
+            ).fetchone()
+            if attempt is None or attempt["status"] != "running":
+                raise ValueError("attempt_not_running")
+            if attempt["latest_seal_revision"] != seal_revision or attempt["latest_sealed_tree"] != sealed_tree:
+                raise ValueError("seal_revision_mismatch")
             existing = conn.execute(
-                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ?",
+                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ? ORDER BY id DESC LIMIT 1",
                 (attempt_id, seal_revision),
             ).fetchone()
-            if existing is not None:
-                if existing["sealed_tree"] == sealed_tree and existing["status"] == status:
-                    conn.commit()
-                    return int(existing["id"])
-                conn.rollback()
+            if existing is not None and existing["status"] == status and existing["summary_hash"] == summary_hash:
+                conn.commit()
+                return int(existing["id"])
+            if (int(existing["id"]) if existing else None) != supersedes_review_id:
                 raise ValueError("review_already_recorded")
             if summary_ref is not None:
                 conn.execute(
@@ -952,7 +972,7 @@ class SQLiteStore:
     def review_for_seal(self, attempt_id: int, seal_revision: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ?",
+                "SELECT * FROM review_records WHERE attempt_id = ? AND seal_revision = ? ORDER BY id DESC LIMIT 1",
                 (attempt_id, seal_revision),
             ).fetchone()
         return dict(row) if row else None

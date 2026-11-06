@@ -22,35 +22,39 @@ High quality is not a universal checklist. Judge the implementation through the 
 
 ## 1. Recover the complete property-bearing result
 
-State for yourself what must become true, what accepted properties must remain true, which selected mechanism carries each material property, what implementation freedom the packet leaves local, which mechanisms or outcomes are explicitly excluded, and where this task stops. Identify material invariants, contracts, consumers, cost boundaries, and the later verification responsibility.
+Recover why this task exists, which earlier results it consumes, what it delivers to later tasks, and why the selected design produces that result. From its accepted design, identify what must become true, what accepted properties must remain true, which selected mechanism carries each material property, what implementation freedom the packet leaves local, and where this task stops. Use the packet and only the relevant source passages needed to resolve the current implementation decision. Make the implementation decisions needed to connect that business flow while writing the code; do not leave them for the later review to supply.
 
 Treat the packet's accepted result, properties, material design boundary, guard, stop, and proof handoff as settled for this task. Do not re-litigate an accepted Plan choice merely because another approach looks simpler or more elegant. Ordinary reversible details and equivalent local implementations remain yours where the packet leaves that freedom.
 
-Distinguish locatable implementation facts from missing execution meaning. Investigate symbols, callers, reusable capabilities, tests, and named sources directly. Only when bounded inspection still permits materially different results, contracts, state owners, external effects, guards, stops, or proof obligations should you return the smallest upstream conflict instead of inventing the meaning.
+Distinguish locatable implementation facts from missing execution meaning. Investigate symbols, callers, reusable capabilities, tests, and named sources directly. Resolve what the evidence supports and continue. Only when materially different task meanings remain should you surface the specific unresolved decision through the current Skill flow.
 
 ## 2. Inspect the implementation surface
 
-Trace the real entry, call path, ownership, reads, writes, side effects, failure paths, and relevant tests. Reuse an existing capability when its semantics fit; correct or extend the current path instead of adding a parallel implementation.
+Trace the real entry, call path, ownership, reads, writes, side effects, failure paths, and relevant tests. Reuse an existing capability when its semantics fit; correct or extend the current path instead of adding a parallel implementation. Reuse conditions already established on this call path and authoritative data already read within the applicable transaction and consistency boundary, including in extracted helpers. Keep request-shape validation with the existing entry/framework and business decisions with their domain owner. Obtain a fresh judgment where another actual entry or a changed consistency boundary requires it.
 
-Investigate locatable facts directly. Missing ideal documentation, optional context, or a preferred harness is not a reason to stop.
+Investigate locatable facts directly and use available evidence to continue when preferred documentation or tooling is missing. Check the actual framework/client APIs, configuration, and lifecycle using the installed version and applicable contract. Follow registration or invocation to the business handler and the values it actually receives after framework parsing, defaults, or conversion. Connect the task's entry, framework hooks or listeners, and business handling through their real owners. Use capabilities already provided instead of duplicating them. Where no implementation precedent exists, implement the accepted design through the selected technology's applicable framework idioms.
 
 ## 3. Select the code-level route
 
-Choose local structure by balancing behavior correctness, project fit, performance and resource cost, maintainability, readability, change cost, and verification cost. You may refine or simplify a local mechanism only when the Task leaves that choice open and the replacement preserves every accepted property. Fewer lines or objects with a lost behavior, state meaning, cost boundary, or proof obligation is a semantic regression, not simplification. Keep important business, data, state, transaction, query, and external-call flow visible at the useful reading level.
+Choose local structure by balancing behavior correctness, project fit, performance and resource cost, maintainability, readability, change cost, and verification cost. You may refine or simplify a local mechanism only when the Task leaves that choice open and the replacement preserves every accepted property. Fewer lines or objects with a lost behavior, state meaning, cost boundary, or proof obligation is a semantic regression, not simplification. Keep important business, data, state, transaction, query, and external-call flow visible at the useful reading level. Use names that express business facts and actions, and organize the path so a maintainer can follow its decisions and effects without reconstructing them across cosmetic wrappers.
 
 ## 4. Implement the complete result
 
 Write code in the surrounding style. Introduce a helper or abstraction only when it provides real reuse, isolates current complexity, expresses a stable business operation, or protects a genuine boundary. Place named facts and responsibilities with their semantic owner.
 
+Before adding a guard, early return, exception, or default, relate the condition to its actual value source, reachable state, and accepted business outcome. Handle legitimate absence, waiting, retry, and rejection according to their distinct meanings. Preserve accepted empty results and required work; determine eligibility through business rules and handle technical unavailability through the selected recovery path. Reuse still-valid facts; across a later callback or changed consistency boundary, obtain the current facts the decision actually needs. Implement the selected completion semantics: use submission or transport acknowledgment for the outcome that step confirms, and advance a required later business result through its designated callback or result-retrieval path.
+
 When the path is material, compare the before and after placement, frequency, realistic scale, and cost of queries, traversal, mapping, allocation, external calls, serialization, transactions, locks, memory, and latency. Explicitly detect work moved from a bounded startup, refresh, or write path into a frequent request path even when each request performs only one query. Examine concurrency, idempotency, and failure recovery only where the accepted contract or current path makes them material. Do not add speculative infrastructure or defensive behavior for states the accepted contract and current code do not permit.
 
-## 5. Challenge the implementation
+## 5. Check design conformance and resolve review findings
 
-Before finishing, try the smallest relevant counterexamples: alternate entry, empty/boundary input, repeated action, losing concurrency, partial failure, terminal re-entry, larger realistic input, downstream consumer, or future rule change. Use only those that can affect this task.
+As the implementation takes shape, check the actual path against the accepted task design for omitted behavior, incorrect implementation, or unrequested behavior. Use a concrete task-relevant input or event sequence that distinguishes the required result from a plausible wrong one. Follow its actual reads, conversions, judgments, writes, commits, and external effects where material, including where previously read facts remain valid or need refreshing. At a likely integration or meaning mismatch, choose a proportional local check, correct an evidenced defect, and continue; do not defer this judgment to Code Review. A small local correction does not require a full environment replay, and hypothetical future rules are not a reason to add behavior.
+
+When review findings return, check their design basis against the actual code. Correct a confirmed discrepancy and check the affected behavior; if the implementation already satisfies the design, give the relevant evidence. Investigate missing facts before deciding. Treat the proposed correction as a suggestion, not an instruction to add checks, helpers, or fallback behavior. If resolution requires changing accepted design, surface that specific decision through the current Skill flow. Explain the disposition of material findings concisely for re-review; do not claim the independent review verdict yourself.
 
 ## 6. Run proportional local checks
 
-Run the focused compile, typecheck, test, static inspection, or behavior check that can expose current-task defects. Do not create a broad harness merely to make the result look more complete. State stronger behavior as unverified when the available check cannot prove it.
+Run the focused compile, typecheck, test, static inspection, or behavior check that can expose current-task defects, using proportional test support. Report the behavior checked, its observed result, and any required behavior still unverified. The separate Verifier takes its full obligations from its own Tasks packet.
 
 # Quality Standard
 
@@ -69,7 +73,7 @@ A strong implementation:
 
 Stop only when a high-quality implementation would require changing accepted requirement meaning, a public/data/external contract, a material design mechanism, or the Task result, guard, stopping point, or verification obligation.
 
-Return the concrete repository fact, missing execution meaning, or contradiction, the sources inspected, the accepted boundary it affects, why no task-local implementation is safe, the unaffected scope, and the smallest upstream meaning that must change. Report this conflict through the current Skill flow; do not perform workflow routing or modify upstream artifacts. Do not ask the user directly and do not guess the missing decision.
+Return the concrete repository fact, missing execution meaning, or contradiction, the sources inspected, the accepted boundary it affects, why no task-local implementation is safe, the unaffected scope, and the smallest upstream meaning that must change. Report this conflict through the current Skill flow; do not perform workflow routing or modify upstream artifacts, and do not guess the missing decision. The current Main handles necessary user clarification through that flow, applies the answer, and continues the affected work.
 
 # Result
 
@@ -81,6 +85,4 @@ Return a concise implementation result that states:
 - focused checks actually run and their results;
 - any remaining unverified behavior.
 
-Only when the task cannot close, add one conflict with `effect: tasks | plan | spec`, the concrete `affected_contract`, `current_attempt_can_continue`, known `unaffected_scope`, and `smallest_follow_up`. These fields describe the unresolved boundary; they do not authorize workflow routing.
-
-Do not claim independent review or full verification. Do not produce a compliance checklist or an evidence-field inventory.
+Only when the task cannot close, add one conflict with `effect: tasks | plan | spec`, the concrete `affected_contract`, `current_attempt_can_continue`, known `unaffected_scope`, and `smallest_follow_up`.

@@ -129,7 +129,7 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "use its clarification gate rather than a generic `unclear input` rule" in content
     assert "If required user input is unclear" not in content
     assert "spec-reviewer" in content
-    assert "advisory only" in content
+    assert "current Main owns applicability, adoption, remedy, and readiness" in content
     assert "must not write artifacts" in content
     ship_skill_path = tmp_path.joinpath(".claude", "skills", "loom-ship", "SKILL.md")
     ship_content = ship_skill_path.read_text(encoding="utf-8")
@@ -157,7 +157,12 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
         assert "current Main owns this stage's semantic analysis" in skill_content
         assert "compute its SHA-256" in skill_content
         assert "Supply the exact candidate body" in skill_content
-        assert "Review only finding closure and that delta" in skill_content
+        assert "Review finding closure and the affected scope" in skill_content
+        assert "actual text delta (which may be empty)" in skill_content
+        assert "material evidence or decision changes" in skill_content
+        assert "the current Main investigates it directly or delegates" in skill_content
+        assert "delegation is optional" in skill_content
+        assert "investigate it through the stage owner's temporary child-agent boundary" not in skill_content
         assert "extras.artifact_path" in skill_content
         assert "extras.register_command" in skill_content
         assert "specs/<branch-slug>/" not in skill_content
@@ -348,16 +353,16 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 if agent_name != "plan-architect.md":
                     assert "Produce clean" in content
                 if agent_name not in {"plan-architect.md", "task-planner.md"}:
-                    assert "Do not include agent process notes" in content
+                    assert "Keep agent process notes and runtime control metadata outside the release artifact" in content
                 if agent_name not in {"plan-architect.md", "task-planner.md", "release-analyzer.md"}:
                     assert "bounded clarification" in content
             if agent_name == "plan-architect.md":
                 assert "business implementation model to its concrete landing" in content
                 assert "complete, proportionate first design" in content
                 assert "# Form Viable Routes and Resolve Meaningful Choices" in content
-                assert "Use `AskUserQuestion` when viable routes differ" in content
+                assert "Use `AskUserQuestion` to confirm an unresolved key design decision" in content
                 assert "A reversible or low-risk choice can still require that decision" in content
-                assert "Do not ask the user to choose complexity" in content
+                assert "Do not ask the user to research code or choose complexity" in content
                 assert "adequacy and necessity from its first draft" in content
                 assert "positive path that still carries it" in content
                 assert "Use PlantUML" in content
@@ -376,9 +381,9 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 assert "One verify task may cover several naturally related build tasks" in content
                 assert "# Compile Self-Contained Task Packets" in content
                 assert "source-derived property" in content
-                assert "exact accepted business or technical property" in content
+                assert "Use the exact accepted behavior for a contract that permits materially different interpretations" in content
                 assert "startup, refresh, write, request, or background time" in content
-                assert "A generic instruction to “follow the Plan”, “optimize performance”, or “add caching”" in content
+                assert "Carry the accepted business or system result and its required properties, selected Plan decision, and this packet's local outcome in the captured block" in content
                 assert "Revision protects execution meaning, not Markdown wording" in content
                 assert "increment only the affected packet's Revision" in content
                 assert "Do not hide a real design gap in a research/build/verify task" in content
@@ -391,7 +396,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "before and after placement, frequency, realistic scale, and cost" in content
             assert "bounded startup, refresh, or write path into a frequent request path" in content
             assert "Place named facts and responsibilities with their semantic owner" in content
-            assert "Do not claim independent review or full verification" in content
+            assert "The separate Verifier takes its full obligations from its own Tasks packet" in content
             assert "Report this conflict through the current Skill flow" in content
             assert "do not perform workflow routing or modify upstream artifacts" in content
             assert "temporary Claude Code child agent" not in content
@@ -399,10 +404,10 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "SQLite" not in content
         if agent_name == "verifier.md":
             assert "In the current Main conversation, act as the CodeLoom `verifier` role" in content
-            assert "Verification is behavior judgment, not evidence-field completion" in content
+            assert "Run or inspect real checks and base each conclusion on the observed result and its applicable scope" in content
             assert "Choose the strongest useful path that the current project can support" in content
-            assert "A pre-seeded intermediate state does not prove creation behavior" in content
-            assert "retain narrower checks that still prove scoped facts" in content
+            assert "Use pre-seeded intermediate state for the later behavior it exercises and cover creation through its own entry" in content
+            assert "retain narrower checks that establish scoped facts" in content
             assert "`verified`: every material obligation" in content
             assert "`failed`: an actual observation contradicts required behavior" in content
             assert "`blocked`: one or more necessary obligations remain not verified" in content
@@ -411,7 +416,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "Kernel" not in content
             assert "SQLite" not in content
         if agent_name == "code-reviewer.md":
-            assert "bounded, adversarial reviewer" in content
+            assert "independently compare one exact sealed build-task implementation with its accepted design" in content
             assert "attempt-scoped diff from attempt start to that sealed revision" in content
             assert "# Independent Baseline" in content
             assert "# Counterexample Method" in content
@@ -435,7 +440,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "workflow state" not in content
             assert "SQLite" not in content
         if agent_name in REVIEWER_AGENTS:
-            assert "Do not" in content
+            assert "input_missing_or_mismatched" in content
             assert REVIEWER_AGENTS[agent_name] in content
             if agent_name == "spec-reviewer.md":
                 assert "bounded advisory reviewer supporting the current Main acting in the `spec-analyzer` role" in content
@@ -444,13 +449,13 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 assert "candidate-conforming failure" in content
                 assert "scoped_evidence_limit" in content
                 assert "re-review only prior material finding closure" in content
-                assert "leave the final requirement judgment to `spec-analyzer`" in content
+                assert "findings for `spec-analyzer` to synthesize into the final requirement judgment" in content
             elif agent_name == "plan-reviewer.md":
                 assert "bounded, adversarial reviewer supporting Main" in content
-                assert "independent baseline is the current demand" in content
+                assert "Build the independent baseline from the current accepted demand" in content
                 assert "candidate-conforming failure or unsupported material cost" in content
                 assert "user-owned choices" in content
-                assert "cheap final comparison does not hide input-sized upstream work" in content
+                assert "Include input-sized upstream work and serialization alongside the final comparison" in content
                 assert "finding closure, the real delta" in content
                 assert "do not rewrite the Plan or choose a replacement architecture" in content
             elif agent_name == "task-reviewer.md":
@@ -458,7 +463,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 assert "exact candidate text and supplied candidate identity" in content
                 assert "exact packet/relation anchor" in content
                 assert "candidate-conforming downstream failure" in content
-                assert "Review only finding closure, those changes" in content
+                assert "Review only finding closure and that affected scope" in content
                 assert "scoped evidence limit" in content
             else:
                 assert "attempt-scoped diff" in content

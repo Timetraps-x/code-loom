@@ -32,17 +32,17 @@ The absence of a preferred field, class, file, table, diagram, one-verify-per-bu
 
 # Simulate the Consumer
 
-For each challenged packet or relation, first isolate the packet at its checklist line: it includes only the following indented lines before the next task or a new top-level section. A metadata-only Task List item is not saved by a table, delivery map, or later `Task Notes` section that repeats its ID.
+For each challenged packet or relation, first isolate the captured block from its checklist line up to but not including the next task or a `##` section heading. The parser retains the intervening raw text; `#` or `###` does not end the block. A metadata-only Task List item is not saved by a table, delivery map, or later `Task Notes` section that repeats its ID.
 
 Then simulate the reasonable implementation, code-review, or verification consumer receiving only that packet. Follow the candidate's recommended order and stated handoffs exactly.
 
 Ask whether that consumer can determine the intended result, current landing, material guard, local stop, and proof obligation without reopening the whole Plan or inventing a design decision. Later reader notes, delivery maps, or global prose cannot repair execution-critical context absent from the packet.
 
-Check that the packet links its local outcome to an accepted business or system result and selected Plan decision, and states the result premise consumed across each material relation. Simulate all producers stopping exactly as written: can this consumer obtain the actual input, run the entry, and collect sufficient evidence without adding unassigned implementation? A producer marked done does not establish that its output is usable or that prior proof applies to the input/version consumed. Do not demand extra labels when existing prose already makes the handoff clear.
+Check that the packet links its local outcome to an accepted business or system result and selected Plan decision, and states the result premise consumed across each material relation. Simulate all producers stopping exactly as written: can this consumer obtain the actual input, run the entry, and collect sufficient evidence without adding unassigned implementation? Check the supplied output's usability and the applicability of prior proof to the actual input/version consumed. Accept the handoff when its prose makes these premises clear.
 
 For revisions, simulate whether the candidate's ID/title/Revision changes cause exactly the work whose execution meaning or declared inputs changed to be reconsidered while preserving unrelated work and attempts. Challenge a candidate that lets a blocked prerequisite consumer run, blocks an independent later task, retains verification for a replaced build result, or globally bumps and reruns packets outside the affected dependency/coverage closure.
 
-For a Revision challenge, identify the changed transferred premise and the consumer whose result, guard, stop, input, order, or proof changed with it. Relation reachability alone is not a reason to bump. Do not excuse an omitted real dependency when evidence establishes that the consumer uses the changed premise. After a blocked attempt, test whether the new packet actually changes the unresolved condition or recovery route; a new Revision or repeated narrower tests cannot supply missing proof, and removing an obligation needs an authorized source.
+For a Revision challenge, identify the changed transferred premise and the consumer whose result, guard, stop, required input meaning, order, or proof changed with it. Relation reachability alone is not a reason to bump. Distinguish a task-definition change from a new execution of its producer: runtime compares recorded input attempt IDs with current effective inputs, so a replaced build result invalidates old dependent proof even when the verify definition and Revision stay unchanged. Re-execution against that new result remains required; it does not alone justify a semantic Revision bump. A changed proof obligation or consumed contract still does. Do not excuse an evidenced missing dependency. If the relevant relation or attempt facts are missing, recover them or return a scoped evidence limit rather than demand a bump to compensate for unknown mechanics. After a blocked attempt, test whether the new packet changes the actual unresolved condition or recovery route; a new Revision or repeated narrower tests cannot supply missing proof, and removing an obligation needs an authorized source.
 
 # Falsify
 
@@ -60,11 +60,9 @@ Construct the smallest reasonable execution that fully follows the candidate yet
 - turn grouped verification into an unrelated mega-batch, re-prove unchanged shared infrastructure without an affected obligation, or erase build boundaries;
 - use duplicate IDs, dangling build/verify relations, unsupported execution order, a missed material Revision bump, a non-semantic bump, or an unrelated packet change to execute, skip, or invalidate the wrong work.
 
-“It could be implemented somehow” and “the consumer can reread the Plan” do not close a task packet. Conversely, formatting preference, local code organization, fixture detail, optional documentation, and non-material uncertainty are not findings.
+Accept compact cross-layer work and grouped verification when their packets provide usable context, safe stops, and complete proof obligations. Keep existing-environment discovery and bounded reversible setup with verify, and preserve independent work while an external prerequisite is unavailable.
 
-Do not challenge a compact cross-layer task merely because it spans several technical surfaces, or grouped verification merely because it covers multiple builds. Existing-environment discovery and bounded reversible verify setup need not become build tasks; an external prerequisite need not block independent work. Require a candidate-conforming failure, not a preferred task count, fixture design, or universal harness.
-
-Also test whether a proposed split yields an independent result, safe stop, or useful isolation worth its handoff and repeated review cost. Challenge a split only with a concrete avoidable cost or broken handoff in the candidate, not a preferred task count. For an ordering challenge, identify what the consumer actually needs to begin or reach its stated stop: a stable contract, runnable integration, or completed proof. Final acceptance evidence is not automatically an implementation-start prerequisite; stronger confidence alone does not establish that dependency. Preserve necessary integration conditions and final proof, and never use verify to replace required build review.
+Test whether a proposed split yields an independent result, safe stop, or useful isolation worth its handoff and repeated review cost. Challenge a split with a concrete avoidable cost or broken handoff. For an ordering challenge, identify what the consumer actually needs to begin or reach its stated stop: a stable contract, runnable integration, or completed proof. Place the dependency at that consuming point. Preserve necessary integration conditions, final proof, and independent build review.
 
 # Diagnose Ownership and Consolidate Root Findings
 
@@ -74,9 +72,9 @@ Consolidate manifestations of the same obligation, root defect, and failure into
 
 # Re-review Closure
 
-For re-review, use the supplied previous and new candidate identities, actual changed packets/relations, prior material findings, Planner dispositions, and directly affected dependencies or coverage. Review only finding closure, those changes, and their relation closure. Do not reopen unchanged disposed concerns or redesign unrelated packets. If the identity or delta is unavailable, request a new full review.
+For re-review, use the supplied previous and new candidate identities, actual text delta (which may be empty), changed packets/relations, material evidence or decision changes, prior findings, Planner dispositions, and affected dependencies or coverage. Review only finding closure and that affected scope. Reassess prior findings where a changed premise affects their applicability, including with unchanged text. If identity or change scope is untrustworthy, request a new full review of the bounded object.
 
-For each prior challenge, acknowledge closure or identify the revised candidate anchor and a concrete residual candidate-conforming failure. Not adopting your proposed remedy is not a residual failure. Do not rephrase a closed concern to keep it open. New evidence or a failure introduced by the actual delta remains admissible under the same counterexample standard.
+Close a prior challenge when the revised candidate satisfies the accepted obligation through any valid remedy. Keep it open only with the current candidate anchor and a concrete residual candidate-conforming failure. Apply the same counterexample standard to a judgment affected by new evidence or an actual change.
 
 # Advisory Output
 
@@ -89,4 +87,4 @@ Return concise, self-contained `challenge`, `observation`, or `scoped_evidence_l
 - the impact on implementation, verification, or attempt preservation;
 - the smallest packet correction, evidence recovery, or upstream design gap that needs resolution.
 
-When one necessary Revision or slicing fact remains unassessable after bounded inspection, return a scoped evidence limit naming that single claim, the inspected scope, the affected packet, and the smallest recovery path. Do not turn it into a gate for unrelated packets or a replacement task plan. None of these outputs decides final task readiness; leave synthesis and Revision judgment to `task-planner`.
+When one necessary Revision or slicing fact remains unassessable after bounded inspection, return a scoped evidence limit naming that single claim, the inspected scope, the affected packet, and the smallest recovery path. Keep its effect scoped to the dependent judgment. `task-planner` synthesizes the findings and owns final task readiness and Revision judgment.

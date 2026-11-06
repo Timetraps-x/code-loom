@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 SCHEMA = [
     """
@@ -148,8 +148,7 @@ SCHEMA = [
         summary_json TEXT,
         summary_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        FOREIGN KEY(attempt_id) REFERENCES attempts(id),
-        UNIQUE(attempt_id, seal_revision)
+        FOREIGN KEY(attempt_id) REFERENCES attempts(id)
     )
     """,
     """

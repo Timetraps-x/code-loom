@@ -558,6 +558,25 @@ def test_claude_code_host_ship_registers_release_artifact_when_present(tmp_path)
     assert current.extras["ship_input_hash"] == handoff.extras["ship_input_hash"]
 
 
+def test_ship_registration_reports_evidence_state_without_claiming_release_readiness(tmp_path):
+    repo = _prepare_host_repo(tmp_path)
+    _complete_host_tasks(repo)
+    handoff = run_stage(repo, "ship")
+    content = "# Release\n\nRelease readiness: blocked\nGoal result confidence: proven\n\nCreate the production index before enablement.\n"
+    path = repo / "specs/master/release.md"
+    path.write_text(content, encoding="utf-8")
+    registered = run_stage(repo, "ship", artifact_file="specs/master/release.md",
+                           ship_input_hash=handoff.extras["ship_input_hash"], input_token=handoff.extras["input_token"])
+    current = run_stage(repo, "ship")
+    for response in (registered, current):
+        assert response.status == "ok"
+        assert response.extras["evidence_status"] == "ready"
+        assert "release_status" not in response.extras
+        assert "evidence checks: ready" in response.message
+    assert current.extras["idempotent"] is True
+    assert path.read_text(encoding="utf-8") == content
+
+
 def test_claude_code_host_rejects_release_when_ship_inputs_change_after_handoff(tmp_path):
     repo = _prepare_host_repo(tmp_path)
     _complete_host_tasks(repo)
@@ -1536,7 +1555,7 @@ def test_ship_derives_evidence_integrity_gap_and_recovers_after_ref_is_restored(
     ref_path.write_bytes(original)
     recovered = run_stage(repo, "ship")
     assert recovered.status == "ok"
-    assert recovered.extras["release_status"] == "ready"
+    assert recovered.extras["evidence_status"] == "ready"
     assert not [
         finding
         for finding in store.findings(int(session["id"]))

@@ -286,4 +286,5 @@ def test_initialize_creates_review_records_table(tmp_path):
         "summary_hash",
         "created_at",
     } <= columns
-    assert any(index[2] for index in indexes)
+    assert any(index["name"] == "review_records_seal" and not index["unique"] for index in indexes)
+    assert not any(index["unique"] for index in indexes)

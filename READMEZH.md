@@ -78,7 +78,7 @@ uv run loom --help
 从 Git tag 安装：
 
 ```powershell
-uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.5.3
+uv tool install codeloom --from git+https://github.com/Timetraps-x/code-loom.git@v0.5.4
 loom --help
 ```
 

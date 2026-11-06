@@ -8,13 +8,13 @@ Use this as a flexible expression aid, not a design checklist or schema. Organiz
 
 Explain what this change enables, the accepted results and prohibited consequences, relevant technical and cost boundaries, and what the current project already provides. Carry forward confirmed user decisions, existing design/UI assets, and corrections with the reasons that still affect the route. Separate accepted obligations, established facts, and recommendations; a candidate mechanism is not a new requirement.
 
-Describe the chosen way of completing the work, why it fits the actual scenario and engineering evidence, and what changes from the existing path. Preserve the decisive rationale and applicability conditions, not the discussion history. When a meaningful alternative required the user's choice, record the resulting behavior and consequence. Do not present an unanswered choice as a completed design or ask the reader to choose a level of complexity.
+Explain how investigation of the current implementation and relevant external implementations informed the selected route: what can be reused, what changes, and which assumptions and costs make the route fit here. Keep the decisive sources, rationale, and applicability conditions with that design, not a research log. For key technical or behavioral choices, record the accepted or explicitly delegated direction and its consequences; carry existing decisions forward without repeated confirmation. Do not present an unanswered choice as a completed design or ask the reader to choose a level of complexity.
 
 ## 2. Concrete Design by Capability
 
 ### <Business or System Capability>
 
-Describe who acts, which facts are used, where judgment belongs, what changes, and what the user or consumer observes and can do next. Connect the necessary business concepts, relationships, authority, permissions, and relevant states to that behavior. Include failure and recovery where the actual scenario requires them, rather than designing a generic operation lifecycle.
+Describe who acts, where facts are acquired, which judgments and effects use them, and what the user or consumer observes and can do next. Show how acquired data and established guarantees are reused within their valid conditions. Connect the necessary business concepts, relationships, authority, permissions, and relevant states to that behavior. Include failure and recovery where the actual scenario requires them, rather than designing a generic operation lifecycle.
 
 Land the selected route in the current project: identify the existing responsibility and evidence, the behavior preserved or changed, the target contract or data path, and affected consumers. Follow the path through the concrete UI, API/RPC, service, data, query, transaction, and integration decisions that materially affect the result. A material surface cannot remain undecided for Tasks; it does not need a separate heading or a layer matrix.
 
@@ -24,7 +24,7 @@ When performance or validation is material, make lifecycle cost and evidence app
 
 Use the smallest useful PlantUML relationship, state, sequence, or activity diagram when it explains a material relationship, transition, cross-system collaboration, or multi-role workflow. Diagrams are design evidence and must agree with the prose, UI, contracts, data owners, and failure meanings. A closed local correction may omit a diagram; complex design must not lose useful visual explanation merely to shorten the Plan.
 
-Shared decisions may be stated once where they are easiest to understand, with local differences at their consumers. Replace superseded decisions consistently after a correction; do not append contradictory exceptions or duplicate a mechanism inventory for every capability.
+State shared decisions once where they are easiest to understand, and make their use, applicability, and local differences clear at the consumers that depend on them. Apply new evidence and user answers to the affected model, contracts, states, diagrams, and proof direction so continuation does not depend on chat history. Replace superseded decisions consistently after a correction; do not append contradictory exceptions or duplicate a mechanism inventory for every capability.
 
 ## 3. Evidence and Implementation Freedom
 
