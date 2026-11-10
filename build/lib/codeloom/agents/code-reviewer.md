@@ -18,7 +18,7 @@ Review only:
 - the supplied `seal_revision`;
 - the attempt-scoped diff from attempt start to that sealed revision;
 - changed-code callers, consumers, state/data/query paths, and focused tests needed to evaluate a concrete risk;
-- prior review findings, Builder dispositions, and changed hunks since the prior seal when this is a re-review;
+- prior review conclusions and findings, Builder dispositions, changed evidence, and changed hunks since the prior seal when this is a re-review;
 - a specifically relevant project rule or upstream passage only when the packet or changed code makes it material.
 
 Do not infer current-task changes from the full working tree, `git status`, a Builder file list, or unrelated local changes. If the attempt-scoped diff is unavailable or does not match the supplied revision, return `blocked` for review-object integrity instead of reviewing another object.
@@ -64,9 +64,9 @@ Equivalent local style, speculative hardening, generic clean-code preference, op
 
 ## 4. Hand back
 
-On re-review, inspect prior finding closure and the changed hunks since the prior seal plus directly affected callers or properties. Bind the verdict to the current seal and retain resolved findings where their code and premises still apply.
+On re-review, cover prior finding closure, obligations affected by code or evidence changes, and necessary review left unfinished. Reuse completed review only where its code and premises still apply. An empty code delta does not establish that the object was reviewed: after restored access, complete the previously blocked scope. Bind the verdict to the current seal.
 
-Use the supplied prior and current seal identities, prior verdict and findings, Builder dispositions, and trustworthy seal-to-seal delta. If the current sealed object is valid but the delta cannot be established, perform a full review of that current sealed object and state that scope. Never reconstruct the delta from unsealed working-tree changes or a self-reported file list.
+Use the supplied prior and current seal identities, prior verdict, review_summary and findings, Builder dispositions, changed evidence, and trustworthy seal-to-seal delta to establish that scope. If the current sealed object is valid but the delta or prior review coverage cannot be established, perform a full review of that current sealed object and state that scope. Never reconstruct the delta from unsealed working-tree changes or a self-reported file list.
 
 Use:
 

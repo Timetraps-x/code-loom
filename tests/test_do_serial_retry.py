@@ -240,6 +240,14 @@ def test_task_revision_invalidates_only_dependents_and_validators(tmp_path):
     t1_retry = run_stage(repo, "do", task_id="T1", action="begin")
     assert t1_retry.status == "ok"
     assert t1_retry.extras["attempt_no"] == 2
+    assert _complete_build_with_passed_review(repo, t1_retry.extras["attempt_id"]).status == "ok"
+    t2_retry = run_stage(repo, "do", task_id="T2", action="begin")
+    assert t2_retry.extras["attempt_no"] == 2
+    assert _complete_build_with_passed_review(repo, t2_retry.extras["attempt_id"]).status == "ok"
+    t4_retry = run_stage(repo, "do", task_id="T4", action="begin")
+    assert t4_retry.extras["attempt_no"] == 2
+    assert _complete_verify(repo, t4_retry.extras["attempt_id"]).status == "ok"
+    assert run_stage(repo, "ship").extras["ship_packet"]["status"] == "ready"
 
     store = SQLiteStore(repo)
     session = store.branch_session("master")

@@ -102,12 +102,12 @@ def test_init_project_creates_config_runtime_and_skills(tmp_path):
     assert "configured `constitution.path`" in adopt_content
     assert "project profile independently" in adopt_content
     assert "update-claude" in adopt_content
-    assert "never append them to the constitution" in adopt_content
+    assert "display the returned suggestions separately from the constitution" in adopt_content
     assert "AskUserQuestion" in adopt_content
     assert "promotion, authority, or legacy conflict" in adopt_content
-    assert "Child-agent delegation is optional" in adopt_content
-    assert "absence of a delegation channel is not itself a blocker" in adopt_content
-    assert "do not assume `.loom/constitution.md`" in adopt_content
+    assert "the Agent's recommendation and reasons" in adopt_content
+    assert "otherwise read that role and carry out its work directly" in adopt_content
+    assert "configured `constitution.path` for writing and registration" in adopt_content
     assert "`scout`" not in adopt_content
     assert "`codebase-scout`" not in adopt_content
     agents_dir = tmp_path.joinpath(".claude", "agents")
@@ -359,12 +359,13 @@ def test_bundled_agent_and_role_resources_are_packaged():
             if agent_name == "plan-architect.md":
                 assert "business implementation model to its concrete landing" in content
                 assert "complete, proportionate first design" in content
-                assert "# Form Viable Routes and Resolve Meaningful Choices" in content
+                assert "# Advance the Developing Design" in content
+                assert "# Develop and Test a Sufficient Route" in content
                 assert "Use `AskUserQuestion` to confirm an unresolved key design decision" in content
-                assert "A reversible or low-risk choice can still require that decision" in content
-                assert "Do not ask the user to research code or choose complexity" in content
-                assert "adequacy and necessity from its first draft" in content
-                assert "positive path that still carries it" in content
+                assert "material behavior, recovery, compatibility, rollout and ongoing cost" in content
+                assert "Ask about the concrete consequence that needs a choice" in content
+                assert "the capabilities' combined effects deliver the whole accepted result and that every introduced responsibility serves it" in content
+                assert "positive path that still carries each accepted property" in content
                 assert "Use PlantUML" in content
                 assert "closed local correction may omit them" in content
                 assert "Produce readable `plan.md`" in content
@@ -434,8 +435,8 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "durable engineering constitution" in content
             assert "# Promotion Judgment" in content
             assert "# Project Profile" in content
-            assert "Do not inventory the whole repository" in content
-            assert "CLAUDE.md Suggestions" in content
+            assert "Stop investigating a candidate once the evidence supports" in content
+            assert "Keep `claude_suggestions` empty in default mode" in content
             assert "Delegation is optional" in content
             assert "workflow state" not in content
             assert "SQLite" not in content
@@ -457,7 +458,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
                 assert "user-owned choices" in content
                 assert "Include input-sized upstream work and serialization alongside the final comparison" in content
                 assert "finding closure, the real delta" in content
-                assert "do not rewrite the Plan or choose a replacement architecture" in content
+                assert "Main owns design, user questions, remedies, and readiness; return findings for Main to resolve" in content
             elif agent_name == "task-reviewer.md":
                 assert "bounded, adversarial reviewer supporting the current Main acting in the `task-planner` role" in content
                 assert "exact candidate text and supplied candidate identity" in content
@@ -491,9 +492,17 @@ def test_tasks_and_do_project_updated_role_handoffs(tmp_path):
     assert "transferred result premise" not in tasks_skill
     assert "Do not re-litigate" in (skills / "loom-do/references/builder-role.md").read_text(encoding="utf-8")
     assert "proof_limit:" in (skills / "loom-do/references/verifier-role.md").read_text(encoding="utf-8")
-    assert "trustworthy seal-to-seal delta" in (skills / "loom-do/SKILL.md").read_text(encoding="utf-8")
-    reviewer = tmp_path / ".claude/agents/code-reviewer.md"
-    assert "obligation_source:" in reviewer.read_text(encoding="utf-8")
+    do_skill = (skills / "loom-do/SKILL.md").read_text(encoding="utf-8")
+    assert "trustworthy seal-to-seal delta" in do_skill
+    assert "prior verdict and review_summary" in do_skill
+    assert "necessary review left unfinished" in do_skill
+    assert "Route only a genuine upstream meaning gap" in do_skill
+    assert "continue a supported task-local repair" in do_skill
+    reviewer = (tmp_path / ".claude/agents/code-reviewer.md").read_text(encoding="utf-8")
+    assert reviewer == resources.files("codeloom.agents").joinpath("code-reviewer.md").read_text(encoding="utf-8")
+    assert "obligation_source:" in reviewer
+    assert "after restored access, complete the previously blocked scope" in reviewer
+    assert "Reuse completed review only where its code and premises still apply" in reviewer
 
 def test_ship_projection_matches_bundled_role_and_template(tmp_path):
     init_project(tmp_path)

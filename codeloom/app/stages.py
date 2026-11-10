@@ -25,7 +25,6 @@ from codeloom.kernel.attempts import attempt_status
 from codeloom.kernel.snapshots import capture_repository_snapshot, git_environment
 from codeloom.kernel.clients import create_llm_client, create_runtime_client
 from codeloom.kernel.drift import derive_artifact_states, detect_plan_or_task_drift, earliest_artifact_repair
-from codeloom.kernel.resolver import ContractRevisionResolver
 from codeloom.kernel.verification import ShellVerifier
 from codeloom.persistence.sqlite import SQLiteStore
 from codeloom.stores.file_evidence import FileEvidenceStore
@@ -97,7 +96,6 @@ def _task_contract_errors(content: str) -> list[str]:
 class StageRunner:
     def __init__(self) -> None:
         self.verifier = ShellVerifier()
-        self.resolver = ContractRevisionResolver()
 
     def run(self, request: KernelRequest) -> KernelResponse:
         command = _normalize_command(request.command)
@@ -1174,14 +1172,6 @@ class StageRunner:
                 errors=["task_prerequisite_incomplete"],
             )
 
-        latest_snapshot = context.store.latest_task_snapshot(session_id, task.task_id)
-        latest_attempt = context.store.latest_attempt(session_id, task.task_id)
-        decision = self.resolver.resolve(task, latest_snapshot, latest_attempt, False)
-        if action != "retry" and decision.action == "verified":
-            recommendation = self._next_task_recommendation(context, tasks)
-            return KernelResponse(status="ok", message=decision.message, recommended_next=recommendation.command, recommended_task_id=recommendation.task_id, recommended_task_title=recommendation.task_title)
-        if decision.action in {"blocked", "superseded"}:
-            return KernelResponse(status="blocked", message=decision.message, recommended_next=decision.recommended_next)
         if action == "retry":
             retry_error = self._do_retry_error(context, tasks, task, session_id)
             if retry_error is not None:
@@ -1223,9 +1213,6 @@ class StageRunner:
                     extras={"active_attempt_id": int(attempt["id"]), "requested_task_id": task.task_id},
                     errors=["active_attempt_exists"],
                 )
-            if created and latest_attempt is not None:
-                context.store.supersede_attempt(int(latest_attempt["id"]), "superseded by a new task attempt")
-                context.store.supersede_open_findings_for_attempt(int(latest_attempt["id"]))
             return self._do_begin_response(
                 context,
                 active_task,
@@ -1264,9 +1251,6 @@ class StageRunner:
                 recommended_task_title=active_task.title,
                 errors=["active_attempt_exists"],
             )
-        if created and latest_attempt is not None:
-            context.store.supersede_attempt(int(latest_attempt["id"]), "superseded by a new task attempt")
-            context.store.supersede_open_findings_for_attempt(int(latest_attempt["id"]))
         attempt_id = int(attempt["id"])
         attempt_no = int(attempt["attempt_no"])
         runtime_result = create_runtime_client(context.config.default_runtime).execute(context.request.cwd, task)
@@ -1645,25 +1629,24 @@ class StageRunner:
                 recommended_next=self._recommended_do(task.task_id),
                 errors=["sealed_diff_generation_failed"], extras={"detail": str(exc)},
             )
-        recorded_revision, seal_created = context.store.record_sealed_changes(attempt_id, sealed_tree)
-        changes["seal_revision"] = recorded_revision
-        content = json.dumps(changes, ensure_ascii=False, indent=2, sort_keys=True)
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        if not context.store.attach_sealed_changes(
-            attempt_id,
-            recorded_revision,
-            sealed_tree,
-            None,
-            content_hash,
-            content,
-        ):
+        try:
+            recorded_revision, seal_created = context.store.record_sealed_changes(attempt_id, sealed_tree)
+            changes["seal_revision"] = recorded_revision
+            content = json.dumps(changes, ensure_ascii=False, indent=2, sort_keys=True)
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            if not context.store.attach_sealed_changes(
+                attempt_id, recorded_revision, sealed_tree, None, content_hash, content,
+            ):
+                raise ValueError("seal_concurrent_update")
+        except ValueError as exc:
             return KernelResponse(
-                status="blocked",
-                message="a newer attempt seal replaced this seal before its changes were attached",
-                recommended_next=self._recommended_do(task.task_id),
-                recommended_task_id=task.task_id,
-                extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
-                errors=["seal_concurrent_update"],
+                status="noop", message="attempt state changed while sealing; resume its current action",
+                recommended_next=self._recommended_do(task.task_id), recommended_task_id=task.task_id,
+                extras={"host_recovery": {
+                    "user_visible": False, "internal_action": "begin",
+                    "command_args": {"action": "begin", "task_id": task.task_id},
+                }},
+                errors=[str(exc)],
             )
         sealed_diff_command = f"git diff --no-ext-diff --no-textconv {start_tree} {sealed_tree}"
 
@@ -1880,6 +1863,9 @@ class StageRunner:
                 extras={"host_recovery": self._seal_changes_recovery(attempt_id, rerun_reviewer=True)},
                 errors=["review_record_mismatch"],
             )
+        if attempt.get("status") == "completing":
+            # Claim accepted this sealed result; later workspace edits belong to later work.
+            return int(review["id"]), latest_revision, latest_sealed_tree
         snapshot = _capture_attempt_snapshot(context.request.cwd, attempt)
         if snapshot.get("errors"):
             extras = dict(snapshot)
@@ -2046,6 +2032,7 @@ class StageRunner:
                     recommended_task_id=task.task_id,
                     extras={
                         "completion_candidate_ref": attempt.get("completion_candidate_ref"),
+                        "unlock_command": self._unlock_command(context, attempt_id),
                         "host_recovery": {
                             "user_visible": False,
                             "internal_action": "resubmit_completion_candidate",
@@ -2125,10 +2112,25 @@ class StageRunner:
                 errors=["completion_conflict"],
             )
 
+        if attempt.get("status") == "completing" and attempt.get("completion_token") != completion_token:
+            return KernelResponse(
+                status="failed", message=f"attempt has a different completion candidate: {attempt_id}",
+                recommended_next=self._recommended_do(task.task_id), recommended_task_id=task.task_id,
+                errors=["completion_conflict"],
+            )
         review_identity = None
         if task.lane == "build" and final_status == "implemented":
             gate = self._build_seal_changes_gate(context, attempt, task, attempt_id)
             if isinstance(gate, KernelResponse):
+                if attempt.get("status") == "completing":
+                    gate.extras.pop("host_recovery", None)
+                    if gate.errors in (["seal_revision_mismatch"], ["legacy_complete_argument_not_supported"]):
+                        gate.extras["host_recovery"] = {
+                            "user_visible": False, "internal_action": "resume_complete",
+                            "command_args": {"action": "complete", "attempt_id": attempt_id},
+                        }
+                    else:
+                        gate.extras["unlock_command"] = self._unlock_command(context, attempt_id)
                 return gate
             review_identity = gate
         if candidate.get("version") == "2" and has_candidate_args:

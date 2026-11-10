@@ -138,14 +138,16 @@ def test_adopt_expert_separates_promotion_profile_and_suggestions():
         "**non-propagation**",
         "**material conflict**",
         "# Project Profile",
-        "Keep commands out of the constitution",
-        "# CLAUDE.md Suggestions",
-        "Never mix these suggestions into the constitution candidate",
-        "# Optional Bounded Delegation",
+        "Route durable engineering rules to `constitution_candidate`",
+        "stack/module/command recommendations with their sources to `project_profile`",
+        "Keep `claude_suggestions` empty in default mode",
+        "In explicit `update-claude` mode, return a separate, bounded list",
         "Delegation is optional",
-        "If no delegation channel is available, continue with bounded direct investigation",
+        "Investigate directly when delegation is unavailable",
         "Write in English by default",
         "downstream prompt surface",
+        "result: ready",
+        "result: conflict",
     ):
         assert expected in content
 

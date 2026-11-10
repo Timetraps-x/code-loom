@@ -41,13 +41,30 @@ def test_adopt_agent_prompt_keeps_semantics_strong_without_delegation_gate():
 
     for expected in (
         "whole-project evidence",
-        "A large majority pattern is not automatically a positive convention",
-        "Current requirements, task details, untracked work, and target-state designs",
+        "persistence/schema/migration/query surfaces, state transitions, and external effects",
+        "which framework mechanisms already carry responsibility",
+        "Use observed business rules, contracts, and costs",
+        "Read positive cases matching actual stacks to identify quality signals",
+        "Stop investigating a candidate once the evidence supports",
+        "Evaluate prevalent patterns by their maintained use, documented intent, tested behavior, and implementation cost",
+        "supported by locatable project evidence or an explicit Owner decision",
+        "Current requirement meaning follows the accepted demand and Owner decisions",
+        "current requirements, task details, untracked work, and target-state designs",
+        "Apply a settled Owner decision directly",
         "Delegation is optional",
-        "If no delegation channel is available, continue with bounded direct investigation",
-        "Keep commands out of the constitution",
+        "Investigate directly when delegation is unavailable",
+        "applicable surface, concrete action, and necessary conditions",
+        "Keep necessary prohibitions concrete",
+        "Keep one shared constitution for a multi-stack repository",
+        "remove generic advice and investigation narration",
         "Every non-empty value needs a locatable evidence source",
-        "Never mix these suggestions into the constitution candidate",
+        "Leave an unsupported recommendation empty",
+        "Complete the other supported recommendations",
+        "Describe declared entry points and checks actually executed with their respective evidence",
+        "the recommended resolution, its reasons, consequences, and remaining uncertainty",
+        "resynthesize the affected result and continue adoption using the settled decision",
+        "Keep `claude_suggestions` empty in default mode",
+        "In explicit `update-claude` mode, return a separate, bounded list",
     ):
         assert expected in prompt
 
@@ -59,13 +76,22 @@ def test_adopt_host_prompt_separates_outputs_and_uses_configured_path():
     prompt = _adopt_skill_content("loom-adopt", "Adopt project", "optional guidance")
 
     for expected in (
-        "configured `constitution.path`",
-        "do not assume `.loom/constitution.md`",
-        "Child-agent delegation is optional",
-        "absence of a delegation channel is not itself a blocker",
+        "configured `constitution.path` for writing and registration",
+        "otherwise read that role and carry out its work directly",
+        "configured path, current profile/commands, and mode",
+        "the Agent's recommendation and reasons",
+        "resynthesize the affected result and continue using that decision",
         "Write only the returned constitution candidate to the exact configured constitution path",
+        "seed marker, template guidance, and empty sections",
+        "profile values, commands, and suggestions stay in their separate outputs",
         "Treat the returned project profile independently",
-        "never append them to the constitution",
+        "Update only evidence-backed `profile.languages`, `profile.frameworks`, `profile.modules`",
+        "preserve explicit existing values when the Agent has no evidence",
+        "ask before replacing a materially conflicting explicit value",
+        "Keep `CLAUDE.md` suggestions inactive in default mode",
+        "display the returned suggestions separately from the constitution",
+        "Editing `CLAUDE.md` requires an explicit apply request from the user",
+        "Leave branch artifacts such as `spec.md`, `plan.md`, `tasks.md`, and `release.md` unchanged",
         "loom adopt --constitution <exact-configured-path>",
     ):
         assert expected in prompt
@@ -305,12 +331,12 @@ def test_plan_and_tasks_roles_preserve_properties_and_reasonable_design():
         "complete, proportionate first design",
         "accepted obligation from a confirmed fact and a candidate mechanism",
         "Read-only consumption, derived status",
-        "adequacy and necessity from its first draft",
+        "the capabilities' combined effects deliver the whole accepted result and that every introduced responsibility serves it",
         "Repeat a check or query when a concrete residual failure or changed fact requires a fresh judgment",
-        "positive path that still carries it",
+        "positive path that still carries each accepted property",
         "input actually published and used",
         "Account separately for O(1) reference access and input-sized parsing, transfer, or HTTP 200 serialization",
-        "not a mechanism blacklist",
+        "If removal loses an accepted property, retain or replace the necessary capability",
     ):
         assert expected in plan
 
@@ -441,6 +467,8 @@ def test_artifact_stage_skill_prompt_eval_requires_host_handoff():
             "do not draft or register a downstream artifact",
             "exact repository-relative `extras.artifact_path`",
             "exact `extras.register_command`",
+            "Main has completed material finding dispositions, applied necessary revisions",
+            "judged the exact artifact ready under the loaded role's completion conditions",
             "Do not reconstruct the artifact path or registration command",
             "user-facing Markdown",
         ):
@@ -553,15 +581,15 @@ def test_stage_main_role_prompt_eval_ask_user_question_bad_cases():
                 "Investigate locatable facts before asking the user",
                 "Use `AskUserQuestion` to confirm an unresolved key design decision",
                 "consequential technical directions, core models, responsibility boundaries, and cross-module contracts",
-                "A reversible or low-risk choice can still require that decision",
+                "material behavior, recovery, compatibility, rollout and ongoing cost",
                 "Present the recommendation and obtain the user's selection before building the dependent detailed design",
                 "Carry forward prior acceptance or explicit delegation while its premises remain applicable",
-                "Do not ask the user to research code or choose complexity",
-                "Ordinary equivalent engineering details",
+                "Ask about the concrete consequence that needs a choice",
+                "Ordinary equivalent engineering details and discoverable facts remain Main decisions",
                 "Apply the answer before proceeding with the dependent design",
                 "A partial reply settles only what it actually answers",
-                "develop its consequences yourself and incorporate them into the selected design",
-                "Do not reopen a settled choice without new evidence or an explicit change",
+                "Update affected responsibilities, contracts, states and costs",
+                "Reopen a settled choice only when new evidence or an explicit change affects it",
             ),
         ),
         PromptEvalCase(
@@ -724,7 +752,11 @@ def test_code_reviewer_requires_three_anchor_finding_and_delta_review():
         "concrete input, state, scale, frequency",
         "before/after lifecycle placement, frequency, realistic scale",
         "work previously bounded to startup, refresh, or write is moved into the request path",
-        "inspect prior finding closure and the changed hunks",
+        "cover prior finding closure, obligations affected by code or evidence changes",
+        "necessary review left unfinished",
+        "Reuse completed review only where its code and premises still apply",
+        "after restored access, complete the previously blocked scope",
+        "delta or prior review coverage cannot be established",
         "`blocked` only when the review object is unavailable, stale, or invalid",
     ):
         assert expected in prompt
@@ -774,6 +806,10 @@ def test_loom_do_skill_prompt_eval_host_handoff_cases():
         "non-empty `review_summary`",
         "same Build attempt",
         "fresh Code Reviewer",
+        "investigate the concrete obstacle before repeating the loop",
+        "Route only a genuine upstream meaning gap",
+        "continue a supported task-local repair",
+        "close the attempt as failed or blocked with the unresolved obstacle",
         "complete the build attempt as `implemented`, recording that the latest sealed implementation passed review",
         "verification_summary",
         "host_recovery.internal_action: resume_complete",
@@ -867,7 +903,7 @@ def test_main_roles_carry_semantic_continuity_without_kernel_logic():
     assert "sufficient recorded proof that every material accepted result is delivered" in release
     assert "human assertion" in release
     assert "source-derived property" in task_planner
-    assert "does not authorize deleting an accepted business or technical property" in plan_architect
+    assert "Simplification must explain the positive path that still carries each accepted property" in plan_architect
 
     for prompt in (builder, reviewer, verifier, release, task_planner, plan_architect):
         for forbidden in ("Kernel", "SQLite", "runtime_refs", "temporary Claude Code child agent"):
@@ -915,6 +951,28 @@ def test_plan_reviewer_receives_identified_candidate_draft():
     ):
         assert expected in host_rule
 
+    for expected in (
+        "original accepted Spec body or its accessible verified path",
+        "extras.input_snapshot.upstream.spec",
+    ):
+        assert expected in host_rule
+    for expected in (
+        "Read the supplied original accepted Spec",
+        "Spec registration identity matches the supplied upstream identity",
+        "use Main's summary to navigate those sources",
+        "scoped evidence limit",
+    ):
+        assert expected in reviewer
+    content_rule = _content_rule("plan")
+    for expected in (
+        "complete accepted `spec.md` beside the canonical Plan path",
+        "extras.input_snapshot.upstream.spec.content_hash",
+        "universal newline normalization",
+        "refresh preflight and reconcile the authoritative input",
+        "decision text and its scope, including a replacement decision",
+    ):
+        assert expected in content_rule
+
     assert "artifact_file" not in architect
     assert "candidate identity" not in architect
 
@@ -957,7 +1015,7 @@ def test_plan_prompts_select_analysis_models_for_material_relationships():
         "relationship, cardinality, state transition, cross-system sequence",
         "multi-role workflow",
         "closed local correction may omit them",
-        "design evidence, not decoration or a quota",
+        "Use diagrams as evidence for those relationships and decisions",
     ):
         assert expected in architect
 
@@ -1018,7 +1076,7 @@ def test_do_roles_preserve_execution_meaning_and_evidence_handoff():
         assert text in builder
     for text in (
         "obligation_source:", "affected_contract:",
-        "If the current sealed object is valid but the delta cannot be established, perform a full review", "trustworthy seal-to-seal delta",
+        "If the current sealed object is valid but the delta or prior review coverage cannot be established, perform a full review", "trustworthy seal-to-seal delta",
         "recover the accepted design from the Task Packet and relevant Plan passages",
         "design requirement, actual code behavior, material discrepancy",
         "Preserve equivalent local choices the design leaves open",
@@ -1034,7 +1092,10 @@ def test_do_roles_preserve_execution_meaning_and_evidence_handoff():
         assert text in verifier
     host = _main_role_rule("do")
     for text in (
-        "prior and new seal identities", "prior verdict and material findings", "Builder dispositions",
+        "prior and new seal identities", "prior verdict and review_summary", "material findings", "Builder dispositions",
+        "changed evidence", "obligations affected by code or evidence changes", "necessary review left unfinished",
+        "reuse completed review only while its code and premises still apply",
+        "trustworthy delta or prior review coverage is unavailable",
         "from available sealed evidence", "full review of the current sealed attempt-scoped object",
         "invent missing evidence fields", "own frozen Tasks packet",
         "Apply the answer and continue within the accepted task",
@@ -1082,10 +1143,17 @@ def test_plan_design_connects_project_path_validation_and_proof():
     plan = _prompt("plan-architect.md")
     for text in (
         "representative current entry, data flow, semantic owner, integration boundary",
-        "positive path that still carries it",
+        "positive path that still carries each accepted property",
         "where facts are acquired, which business judgments and effects use them",
-        "Reuse acquired data and established guarantees within the conditions that make them valid",
-        "place each judgment at the boundary that owns its truth",
+        "Trace cross-process use through its callable entry, authentication, response meaning and effects",
+        "Establish whether the evidence covers an internal operation, a callable contract, or the complete consumer path",
+        "Reuse an established path within that scope",
+        "When a required connection is unknown, inspect the consuming path",
+        "when it is absent or insufficient, design the smallest change",
+        "For each allowed result, identify the evidence sufficient to reach it",
+        "Apply each step and its failure handling within the result branches that depend on it",
+        "Reuse acquired data and established guarantees within their valid conditions",
+        "placing each judgment at the boundary that owns its truth",
         "Repeat a check or query when a concrete residual failure or changed fact requires a fresh judgment",
         "before and after work at startup, refresh, write, request, or background time",
         "Prove this change's integration using evidenced shared-platform guarantees within their applicable scope",
@@ -1136,9 +1204,21 @@ def test_plan_review_corrections_remain_main_design_decisions():
     reviewer = _prompt("plan-reviewer.md")
     assert "check its source, scenario, and applicability" in plan
     assert "smallest sufficient correction" in plan
-    assert "does not authorize deleting an accepted business or technical property" in plan
+    assert "Simplification must explain the positive path that still carries each accepted property" in plan
     assert "update dependent interfaces, states, diagrams, and proof together" in plan
-    assert "Replace superseded decisions instead of accumulating exceptions" in plan
+    assert "replace superseded decisions instead of accumulating exceptions" in plan
+    for expected in (
+        "As you construct each capability",
+        "before extending the design that relies on it",
+        "Decide whether to adopt, adapt or decline it",
+        "Complete the disposition when the obligation is satisfied",
+        "finding is shown to be inapplicable or an optional improvement",
+        "Carry settled dispositions forward while their premises apply",
+        "For a recurring dispute, identify and resolve the fact or user-owned choice",
+        "name that question and its affected scope",
+        "material findings have reasoned dispositions",
+    ):
+        assert expected in plan
     assert "leaving the remedy with Main" in reviewer
     assert "Close a challenge when any valid correction satisfies the accepted obligation" in reviewer
 
@@ -1164,8 +1244,8 @@ def test_adopt_does_not_own_repository_scope_discovery():
     from codeloom.app.claude_plugin import bundled_claude_skill_resources
     resources = bundled_claude_skill_resources()
     skill = next(content for path, content in resources.items() if str(path).replace("\\", "/").endswith("loom-adopt/SKILL.md"))
-    assert "maintained by `loom init`, not adopt" in skill
-    assert "Preserve it unchanged" in skill
+    assert "`loom init` owns repository scope configuration" in skill
+    assert "Preserve `git.repositories` unchanged" in skill
 
 
 def test_stage_ownership_has_local_correction_and_genuine_return_converses():
@@ -1223,7 +1303,10 @@ def test_host_review_protocol_defers_semantic_ownership_to_main_roles():
         prompt = _main_role_rule(stage)
         assert "Main owns applicability, adoption, remedy, and readiness" in prompt
         assert "loaded role's decision and upstream-return rules" in prompt
-        assert "Evaluate findings against the accepted obligations and applicable evidence, select the correction" in prompt
+        assert "Evaluate findings against the accepted obligations and applicable evidence" in prompt
+        assert "decide whether to adopt, adapt or decline each finding" in prompt
+        assert "A supported decision to decline a finding completes its disposition" in prompt
+        assert "carry settled dispositions forward while their premises apply" in prompt
         assert "actual text delta (which may be empty)" in prompt
         if stage == "spec":
             assert "material input changes" in prompt
@@ -1235,34 +1318,76 @@ def test_host_review_protocol_defers_semantic_ownership_to_main_roles():
 
 def test_plan_method_forms_a_first_design_before_review_repair():
     plan = _prompt("plan-architect.md")
-    assert plan.index("# Understand the Work") < plan.index("# Form Viable Routes")
-    assert plan.index("# Form Viable Routes") < plan.index("# Make the Selected Route Implementable")
-    assert plan.index("# Make the Selected Route Implementable") < plan.index("# Check the First Design")
     for text in (
-        "preventing unsupported responsibilities in the first draft is the goal",
-        "In an existing project, ground design in a representative current entry",
-        "In a new project without implementation examples, start from the accepted behavior",
-        "Missing historical code is not a reason to stop",
+        "Identify the unresolved question that most affects the design or its use by Tasks",
+        "choose work that can resolve it",
+        "When the same question stalls, change the source, method or question scope",
+        "Apply each result to the route before extending work that depends on it",
+        "Continue from the changed design until the complete capability is ready",
+        "a fresh Tasks owner recover the selected design without the authoring conversation",
+    ):
+        assert text in plan
+    understanding = plan.split("# Understand the Design Problem", 1)[1].split("# Advance the Developing Design", 1)[0]
+    assert "Form an initial route for the complete work" in understanding
+    assert "including branches that use existing capabilities" in understanding
+    assert "Establish whether the evidence covers an internal operation, a callable contract, or the complete consumer path" in understanding
+    construction = plan.split("# Develop and Test a Sufficient Route", 1)[1].split("# Resolve Meaningful Choices", 1)[0]
+    assert "work backward from its observable results" in construction
+    assert "Replay this route in actual event order" in construction
+    assert "before extending the design that relies on it" in construction
+    for text in (
+        "which operation acquires, transfers or releases the needed guarantee",
+        "Inspect the relevant implementation when this ordering is unknown",
+        "develop the direct and strengthened routes far enough to compare a concrete event sequence",
+    ):
+        assert text in construction
+    for text in (
+        "Ground the developing route in a representative current entry",
+        "In a new project, use accepted behavior, confirmed technology choices and framework capabilities",
+        "Investigation can cross module boundaries; the change scope follows the accepted result",
         "relevant first-party guidance, mature external implementations, or documented practice",
-        "explain their applicable mechanisms, assumptions, and costs",
         "Combine internal and external evidence to develop feasible routes",
-        "Reuse applicable evidence for a bounded correction",
+        "Work from the accepted result, current route, established evidence and applicable decisions",
         "If a source or tool fails, seek available evidence or another viable investigation path",
         "Use established premises to resolve supported consequences and continue",
-        "then apply the result and finish the affected design",
-        "Investigate enough to make the choice understandable, not until every source is exhausted",
+        "obtain the evidence or user answer and finish the affected design",
+        "Stop research when it supports the current judgment",
         "If only one key route is feasible",
         "Tasks can consume the selected design directly",
         "make their use and local differences clear at the consumers",
         "Derive transaction or coordination boundaries from the facts that must remain consistent",
         "Present the recommendation and obtain the user's selection before building the dependent detailed design",
-        "Complexity is derived after the direction is chosen",
-        "A user-confirmed mechanism is a real constraint",
+        "a user-confirmed mechanism remains a constraint while its premises apply",
         "Preserve unaffected wording, decisions, and assets",
         "If the answer would change or contradict accepted Spec",
-        "the reviewer is not responsible for turning an oversized or incomplete first draft",
+        "Main resolves the gaps and unnecessary work before handing the candidate to review",
+        "Reconsider the route when its remedy creates further responsibilities",
+        "Distinguish a required outcome from a permitted outcome and an implementation preference",
+        "including guarantee strength and duration, caller changes, rejection behavior, rollout and continuing cost",
+        "Preserve the established contracts of reused capabilities",
+        "actual competing writers and existing lifecycle operations",
+        "before handing the design to Builder",
+        "Compare concrete histories that end in the same current state",
+        "callbacks that can change another pending item before its next effect",
+        "retry exhaustion or operator handoff needs an established contract or a resolved design choice",
+        "Apply the selected simplification to the design and finish the affected revision",
     ):
         assert text in plan
+    reviewer = _prompt("plan-reviewer.md")
+    for text in (
+        "# Test Whether the Route Is Sufficient",
+        "# Test Whether the Added Responsibilities Are Needed",
+        "Compare under the same facts and obligations",
+        "Compare the strength and lifetime of the selected guarantee with the accepted obligation",
+        "Distinguish required outcomes, permitted outcomes and implementation preferences",
+        "actual writers and existing cleanup operations",
+        "Ground a violation in an accepted obligation and a concrete scenario",
+        "A necessity challenge needs a supported unnecessary consequence or cost",
+        "Larger changes can be justified when the existing path cannot carry the required behavior",
+        "inspect how the revised artifact addresses the disputed consequence",
+        "State the inspected scope and the evidence supporting each conclusion",
+    ):
+        assert text in reviewer
     host = _main_role_rule("plan")
     assert "use AskUserQuestion before registration" in host
     assert "generic operation lifecycle" not in host

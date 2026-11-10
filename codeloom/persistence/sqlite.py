@@ -123,6 +123,24 @@ class SQLiteStore:
                     latest_sealed_changes_ref = COALESCE(latest_sealed_changes_ref, latest_changes_ref)
                 """
             )
+        if conn.execute("PRAGMA user_version").fetchone()[0] < 15:
+            # Older versions committed replacement before retiring the previous attempt.
+            replaced = conn.execute(
+                """SELECT old.id, old.branch_session_id FROM attempts AS old
+                   WHERE old.status IN ('blocked', 'failed', 'implemented', 'verified', 'superseded')
+                     AND EXISTS (
+                         SELECT 1 FROM attempts AS newer
+                         WHERE newer.branch_session_id = old.branch_session_id
+                           AND newer.task_id = old.task_id AND newer.attempt_no > old.attempt_no
+                           AND newer.id > old.id
+                     )"""
+            ).fetchall()
+            for row in replaced:
+                conn.execute("UPDATE attempts SET status = 'superseded' WHERE id = ?", (row["id"],))
+                conn.execute(
+                    "UPDATE findings SET status = 'superseded' WHERE branch_session_id = ? AND attempt_id = ? AND status = 'open'",
+                    (row["branch_session_id"], row["id"]),
+                )
 
     def _migrate_runtime_refs(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_refs)").fetchall()}
@@ -573,11 +591,11 @@ class SQLiteStore:
             ).fetchone()
             if active is not None:
                 return dict(active), False
-            row = conn.execute(
-                "SELECT MAX(attempt_no) AS attempt_no FROM attempts WHERE branch_session_id = ? AND task_id = ?",
+            previous = conn.execute(
+                "SELECT id, attempt_no FROM attempts WHERE branch_session_id = ? AND task_id = ? ORDER BY attempt_no DESC LIMIT 1",
                 (session_id, task_id),
             ).fetchone()
-            attempt_no = int(row["attempt_no"] or 0) + 1
+            attempt_no = int(previous["attempt_no"]) + 1 if previous else 1
             now = utc_now()
             cursor = conn.execute(
                 """
@@ -597,6 +615,15 @@ class SQLiteStore:
                 conn.execute(
                     "INSERT INTO runtime_refs (attempt_id, kind, path, content_hash, created_at) VALUES (?, 'task_packet', ?, ?, ?)",
                     (attempt_id, task_packet_ref, task_packet_hash, now),
+                )
+            if previous is not None:
+                conn.execute(
+                    "UPDATE attempts SET status = 'superseded', updated_at = ? WHERE id = ?",
+                    (now, previous["id"]),
+                )
+                conn.execute(
+                    "UPDATE findings SET status = 'superseded' WHERE branch_session_id = ? AND attempt_id = ? AND status = 'open'",
+                    (session_id, previous["id"]),
                 )
             created = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
             conn.commit()
@@ -838,12 +865,14 @@ class SQLiteStore:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
+                "SELECT status, latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
                 (attempt_id,),
             ).fetchone()
             if row is None:
                 conn.rollback()
                 raise ValueError(f"attempt not found: {attempt_id}")
+            if row["status"] != "running":
+                raise ValueError("attempt_not_running")
             revision = int(row["latest_seal_revision"] or 0)
             if revision > 0 and row["latest_sealed_tree"] == sealed_tree:
                 conn.commit()
@@ -873,11 +902,12 @@ class SQLiteStore:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
+                "SELECT status, latest_sealed_tree, latest_seal_revision FROM attempts WHERE id = ?",
                 (attempt_id,),
             ).fetchone()
             if (
                 row is None
+                or row["status"] != "running"
                 or int(row["latest_seal_revision"] or 0) != seal_revision
                 or row["latest_sealed_tree"] != sealed_tree
             ):
