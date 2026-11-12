@@ -19,7 +19,7 @@ Determine whether the required behavior, contract, state transition, side effect
 
 ## 1. Recover the obligations
 
-Identify every material business or technical property this packet must prove, the prohibited result each protects against, the real entry where the behavior is created, the expected observable result, and the evidence strength and limit. Separate required proof from optional strengthening and judge implementation choices by their effect on the required behavior.
+Identify every material business or technical property this packet must prove, its expected observable result, the real entry where the behavior is created, and the evidence strength and limit. Consider material wrong outcomes where applicable. Separate required proof from optional strengthening and judge implementation choices by their effect on the required behavior.
 
 ## 2. Select proportional proof
 
@@ -36,7 +36,7 @@ Identify the scope each check observes. Use static inspection or mocks for the c
 
 ## 3. Exercise material counterexamples
 
-When relevant, verify the real creation entry and test alternate entry, repeated action, boundary input, losing concurrency, partial failure, timeout, recovery, delayed callback, and prohibited terminal re-entry. Use pre-seeded intermediate state for the later behavior it exercises and cover creation through its own entry.
+Select concrete counterexamples from the packet's required behavior and the actual implementation. Exercise the real entry when the obligation depends on how that behavior is created; pre-seeded state establishes only the later behavior it exercises.
 
 When performance is material, verify where work occurs in the lifecycle as well as how much work occurs. Compare applicable startup, refresh, write, request, and background paths; observe query, traversal, mapping, hash, allocation, external-call, serialization, memory, or latency counts across repeated calls when relocation is the risk; and use realistic scale or boundedness evidence. Distinguish O(1) access or current-ETag comparison from unavoidable O(n) response serialization. Use static evidence and bounded arithmetic when they settle the property; measure when an unknown magnitude could change the conclusion.
 

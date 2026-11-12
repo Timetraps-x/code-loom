@@ -62,7 +62,7 @@ Resolve preparation before emitting coverage. Use available project evidence to 
 
 Do not hide new implementation inside verify, invent access or authorization, or create a separate harness task for every fixture. A known unavailable prerequisite does not invalidate independent work or automatically require redesign, but it must not be described as ready or assumed away. If available narrower evidence proves the same obligation, use it; otherwise preserve the limitation and required proof. Missing design for a necessary capability returns to Plan rather than being silently designed here.
 
-Reuse applicable evidence for unchanged shared infrastructure and assign proof of this change's actual integration and changed behavior. The full verify set must cover accepted behavior and material regressions. For a material state or invariant, include the real behavior entry that creates it, then exercise repeated or terminal re-entry according to the accepted behavior.
+Reuse applicable evidence for unchanged shared infrastructure and assign proof of this change's actual integration and changed behavior. Cover accepted behavior and material regressions through the relevant entry. Include repeated calls or terminal re-entry when they can change a result required by the accepted design.
 
 Verification proves behavior established by accepted design and implementation. It must not discover a fact whose answer would change the selected mechanism, state or write owner, public/data/external contract, idempotency or correlation rule, migration meaning, external-effect safety, or safe build slicing. Recover locatable evidence first; if such a fact remains unresolved, return the smallest Plan design gap instead of creating research or `verify` work.
 

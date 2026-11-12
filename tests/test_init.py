@@ -407,7 +407,8 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "In the current Main conversation, act as the CodeLoom `verifier` role" in content
             assert "Run or inspect real checks and base each conclusion on the observed result and its applicable scope" in content
             assert "Choose the strongest useful path that the current project can support" in content
-            assert "Use pre-seeded intermediate state for the later behavior it exercises and cover creation through its own entry" in content
+            assert "Exercise the real entry when the obligation depends on how that behavior is created" in content
+            assert "pre-seeded state establishes only the later behavior it exercises" in content
             assert "retain narrower checks that establish scoped facts" in content
             assert "`verified`: every material obligation" in content
             assert "`failed`: an actual observation contradicts required behavior" in content

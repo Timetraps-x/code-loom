@@ -332,11 +332,10 @@ def test_plan_and_tasks_roles_preserve_properties_and_reasonable_design():
         "accepted obligation from a confirmed fact and a candidate mechanism",
         "Read-only consumption, derived status",
         "the capabilities' combined effects deliver the whole accepted result and that every introduced responsibility serves it",
-        "Repeat a check or query when a concrete residual failure or changed fact requires a fresh judgment",
         "positive path that still carries each accepted property",
-        "input actually published and used",
+        "Choose a sufficient design with proportionate changed responsibilities, caller obligations and continuing cost",
         "Account separately for O(1) reference access and input-sized parsing, transfer, or HTTP 200 serialization",
-        "If removal loses an accepted property, retain or replace the necessary capability",
+        "Preserve required behavior and the established contracts of reused capabilities",
     ):
         assert expected in plan
 
@@ -364,6 +363,8 @@ def test_plan_and_tasks_roles_preserve_properties_and_reasonable_design():
         "startup, refresh, write, request, or background time",
         "execution-critical information only in later notes or maps",
         "Revision protects execution meaning",
+        "Cover accepted behavior and material regressions through the relevant entry",
+        "Include repeated calls or terminal re-entry when they can change a result required by the accepted design",
     ):
         assert expected in task_planner
 
@@ -829,8 +830,10 @@ def test_verifier_prompt_eval_quality_and_result_semantics():
         "Run or inspect real checks and base each conclusion on the observed result and its applicable scope",
         "# Verification Method",
         "Choose the strongest useful path that the current project can support",
-        "verify the real creation entry",
-        "Use pre-seeded intermediate state for the later behavior it exercises and cover creation through its own entry",
+        "Consider material wrong outcomes where applicable",
+        "Select concrete counterexamples from the packet's required behavior and the actual implementation",
+        "Exercise the real entry when the obligation depends on how that behavior is created",
+        "pre-seeded state establishes only the later behavior it exercises",
         "When performance is material",
         "retain narrower checks that establish scoped facts",
         "`verified`: every material obligation",
@@ -1150,11 +1153,10 @@ def test_plan_design_connects_project_path_validation_and_proof():
         "Reuse an established path within that scope",
         "When a required connection is unknown, inspect the consuming path",
         "when it is absent or insufficient, design the smallest change",
-        "For each allowed result, identify the evidence sufficient to reach it",
-        "Apply each step and its failure handling within the result branches that depend on it",
-        "Reuse acquired data and established guarantees within their valid conditions",
-        "placing each judgment at the boundary that owns its truth",
-        "Repeat a check or query when a concrete residual failure or changed fact requires a fresh judgment",
+        "Connect each dependency to an existing owner or the smallest required change",
+        "Acquire data and handle failure within the result branches that need them",
+        "Reuse acquired data while it remains valid for the decision",
+        "Use facts that remain valid when the action takes effect",
         "before and after work at startup, refresh, write, request, or background time",
         "Prove this change's integration using evidenced shared-platform guarantees within their applicable scope",
         "Tasks allocates the work",
@@ -1333,12 +1335,14 @@ def test_plan_method_forms_a_first_design_before_review_repair():
     assert "Establish whether the evidence covers an internal operation, a callable contract, or the complete consumer path" in understanding
     construction = plan.split("# Develop and Test a Sufficient Route", 1)[1].split("# Resolve Meaningful Choices", 1)[0]
     assert "work backward from its observable results" in construction
-    assert "Replay this route in actual event order" in construction
+    assert "Check the route through the current code and relevant business scenarios" in construction
     assert "before extending the design that relies on it" in construction
     for text in (
-        "which operation acquires, transfers or releases the needed guarantee",
-        "Inspect the relevant implementation when this ordering is unknown",
-        "develop the direct and strengthened routes far enough to compare a concrete event sequence",
+        "Address competing operations when they can change the required result, reusing existing transactions, constraints and synchronization",
+        "Check the relevant framework behavior when the result depends on it",
+        "Locate any remaining defect in the actual path before changing its coordination",
+        "keep the correction within the affected operations",
+        "Compare the direct route with any proposed expansion using the same accepted result",
     ):
         assert text in construction
     for text in (
@@ -1355,21 +1359,17 @@ def test_plan_method_forms_a_first_design_before_review_repair():
         "If only one key route is feasible",
         "Tasks can consume the selected design directly",
         "make their use and local differences clear at the consumers",
-        "Derive transaction or coordination boundaries from the facts that must remain consistent",
         "Present the recommendation and obtain the user's selection before building the dependent detailed design",
         "a user-confirmed mechanism remains a constraint while its premises apply",
         "Preserve unaffected wording, decisions, and assets",
         "If the answer would change or contradict accepted Spec",
         "Main resolves the gaps and unnecessary work before handing the candidate to review",
-        "Reconsider the route when its remedy creates further responsibilities",
-        "Distinguish a required outcome from a permitted outcome and an implementation preference",
-        "including guarantee strength and duration, caller changes, rejection behavior, rollout and continuing cost",
-        "Preserve the established contracts of reused capabilities",
-        "actual competing writers and existing lifecycle operations",
-        "before handing the design to Builder",
-        "Compare concrete histories that end in the same current state",
-        "callbacks that can change another pending item before its next effect",
-        "retry exhaustion or operator handoff needs an established contract or a resolved design choice",
+        "Include affected consumers when changing shared code or configuration",
+        "If a remedy creates more work, reconsider whether narrowing the action or reusing an existing capability resolves the original problem",
+        "Resolve material changes to accepted behavior or scope before selecting them",
+        "When acting on a prior user choice, define which changes invalidate it and preserve that meaning in the selected implementation",
+        "connect initiation to the actual worker or result-retrieval path and its authoritative outcome",
+        "Define continuation and failure handling from the accepted behavior and established operation contract",
         "Apply the selected simplification to the design and finish the affected revision",
     ):
         assert text in plan
@@ -1378,10 +1378,12 @@ def test_plan_method_forms_a_first_design_before_review_repair():
         "# Test Whether the Route Is Sufficient",
         "# Test Whether the Added Responsibilities Are Needed",
         "Compare under the same facts and obligations",
-        "Compare the strength and lifetime of the selected guarantee with the accepted obligation",
+        "Compare any stronger guarantee and its continuing cost with what the accepted result actually requires",
         "Distinguish required outcomes, permitted outcomes and implementation preferences",
-        "actual writers and existing cleanup operations",
-        "Ground a violation in an accepted obligation and a concrete scenario",
+        "Test alternate entries, concurrency, asynchronous delivery or recovery when the accepted behavior or evidence makes them relevant",
+        "Trace which decisions require current state and which require the user's earlier selection",
+        "Follow the remedy's effects on callers and shared components",
+        "Ground a challenge in a concrete failure or unnecessary cost, and leave the remedy with Main",
         "A necessity challenge needs a supported unnecessary consequence or cost",
         "Larger changes can be justified when the existing path cannot carry the required behavior",
         "inspect how the revised artifact addresses the disputed consequence",
