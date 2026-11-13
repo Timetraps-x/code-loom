@@ -122,6 +122,21 @@ def test_prompt_eval_supplementer_writes_missing_case_drafts(tmp_path):
     assert payload["cases"][0]["id"] == missing[0].id
     assert payload["cases"][0]["surfaces"]
 
+    from codeloom.prompt_evals.runner import run_prompt_evals
+
+    tuned_ids = {
+        "plan.scope.actual-gap-and-validation-cost",
+        "do.context-first-data-and-proportional-checks",
+        "code-reviewer.quality.hidden-flow-and-evidence-discipline",
+        "code-reviewer.do.requirement-design-convention-boundary",
+    }
+    tuned_cases = [case for case in payload["cases"] if case["id"] in tuned_ids]
+    assert {case["id"] for case in tuned_cases} == tuned_ids
+    output_path.write_text(json.dumps({"cases": tuned_cases}), encoding="utf-8")
+    run = run_prompt_evals(tmp_path)
+    assert len(run.results) == len(tuned_ids)
+    assert all(result.status == "pass" for result in run.results), run.results
+
 
 def test_spec_analyzer_prompt_recovers_real_requirements():
     analyzer = _prompt("spec-analyzer.md")
@@ -690,9 +705,9 @@ def test_ask_user_question_prompt_eval_non_blocking_counter_cases():
             surface=_prompt("code-reviewer.md"),
             badcase="code reviewer turns normal style preference into a blocking decision",
             required_guardrails=(
-                "Equivalent local style, speculative hardening, generic clean-code preference, optional strengthening",
+                "Respect implementation choices left open by the design",
                 "There is no finding quota",
-                "Return `pass` when no material counterexample survives",
+                "Return `pass` when no material design discrepancy remains",
             ),
         ),
         PromptEvalCase(
@@ -734,6 +749,13 @@ def test_builder_prompt_preserves_property_bearing_result_and_lifecycle_cost():
         "before and after placement, frequency, realistic scale, and cost",
         "work moved from a bounded startup, refresh, or write path into a frequent request path",
         "Do not add speculative infrastructure",
+        "Read the smallest relevant upstream or project-rule passage needed to understand an accepted design decision",
+        "Before writing the affected production path or fixtures, inspect the concrete types, callable APIs",
+        "decide where facts are loaded and reused before adding per-item rules",
+        "preserving boundaries that require fresh reads",
+        "values delivered to the business handler after parsing, defaults or conversion",
+        "reusing existing tests, fixtures and project wiring",
+        "Distinguish missing implementation support from an unavailable environment",
         "The separate Verifier takes its full obligations from its own Tasks packet",
     ):
         assert expected in prompt
@@ -742,17 +764,22 @@ def test_builder_prompt_preserves_property_bearing_result_and_lifecycle_cost():
     assert "SQLite" not in prompt
 
 
-def test_code_reviewer_requires_three_anchor_finding_and_delta_review():
+def test_code_reviewer_limits_findings_to_design_conformance_and_preserves_delta_review():
     prompt = _prompt("code-reviewer.md")
 
     for expected in (
         "attempt-scoped diff from attempt start to that sealed revision",
         "return `blocked` for review-object integrity",
-        "smallest relevant candidate-conforming scenario",
-        "accepted Task property, design obligation, or demonstrated current-project constraint",
-        "concrete input, state, scale, frequency",
-        "before/after lifecycle placement, frequency, realistic scale",
-        "work previously bounded to startup, refresh, or write is moved into the request path",
+        "Compare what the accepted design requires with what the changed code actually does",
+        "Follow the real entry and directly affected call and data paths",
+        "required behavior or selected mechanisms that are missing or incorrect",
+        "added behavior that contradicts the design",
+        "Compare quality properties only where the accepted design requires them",
+        "Cite the accepted design source and exact code location",
+        "Include a concrete example only when it clarifies the discrepancy",
+        "Code inspection is sufficient when the difference is visible in the implementation",
+        "Execution verification belongs to the separate Verifier task",
+        "Do not expand review into design reassessment, a general quality audit, or additional test requirements",
         "cover prior finding closure, obligations affected by code or evidence changes",
         "necessary review left unfinished",
         "Reuse completed review only where its code and premises still apply",
@@ -775,6 +802,8 @@ def test_loom_do_skill_keeps_host_choreography_and_recovery():
         "Do not invoke Builder or Verifier as a subagent",
         "extras.host_internal_flow",
         "exact attempt-scoped diff",
+        "Keep Code Review limited to code/design consistency",
+        "execution verification belongs to the separate Verify task",
         "action=record-review",
         "seal again and invoke a fresh Code Reviewer",
         "action=retry",
@@ -829,7 +858,9 @@ def test_verifier_prompt_eval_quality_and_result_semantics():
         "CodeLoom `verifier` role",
         "Run or inspect real checks and base each conclusion on the observed result and its applicable scope",
         "# Verification Method",
-        "Choose the strongest useful path that the current project can support",
+        "Choose a feasible set of checks that establishes the packet's required outcomes",
+        "reusing applicable evidence and existing test facilities",
+        "Extend the checks when a material obligation remains unresolved",
         "Consider material wrong outcomes where applicable",
         "Select concrete counterexamples from the packet's required behavior and the actual implementation",
         "Exercise the real entry when the obligation depends on how that behavior is created",
@@ -882,7 +913,7 @@ def test_core_agent_prompts_keep_stack_specific_verification_out_of_global_surfa
             assert phrase not in surface, f"{surface_name} still contains stack-specific verification detail: {phrase}"
 
     assert "focused checks actually run" in surfaces["builder"]
-    assert "strongest useful path" in surfaces["verifier"]
+    assert "a feasible set of checks" in surfaces["verifier"]
     assert "actual checks and observations" in surfaces["loom-do"]
 
     for surface_name in ("builder", "verifier"):
@@ -899,7 +930,7 @@ def test_main_roles_carry_semantic_continuity_without_kernel_logic():
     assert "accepted properties must remain true" in builder
     assert "before and after placement, frequency, realistic scale, and cost" in builder
     assert "accepted Task property" in reviewer
-    assert "before/after lifecycle placement" in reviewer
+    assert "Compare quality properties only where the accepted design requires them" in reviewer
     assert "business or technical property" in verifier
     assert "startup, refresh, write, request, and background paths" in verifier
     assert "O(1) access or current-ETag comparison" in verifier
@@ -1158,10 +1189,12 @@ def test_plan_design_connects_project_path_validation_and_proof():
         "Reuse acquired data while it remains valid for the decision",
         "Use facts that remain valid when the action takes effect",
         "before and after work at startup, refresh, write, request, or background time",
-        "Prove this change's integration using evidenced shared-platform guarantees within their applicable scope",
+        "Evaluate implementation and validation cost together",
+        "existing tests, project wiring, available environments and applicable shared guarantees",
         "Tasks allocates the work",
         "Leave existing-environment discovery and reversible setup to execution",
-        "Select a feasible proof path that satisfies the obligation with proportional infrastructure",
+        "assign new test support only where the accepted behavior needs it",
+        "Distinguish planned checks from executed results",
     ):
         assert text in plan
     reviewer = _prompt("plan-reviewer.md")
@@ -1335,13 +1368,15 @@ def test_plan_method_forms_a_first_design_before_review_repair():
     assert "Establish whether the evidence covers an internal operation, a callable contract, or the complete consumer path" in understanding
     construction = plan.split("# Develop and Test a Sufficient Route", 1)[1].split("# Resolve Meaningful Choices", 1)[0]
     assert "work backward from its observable results" in construction
-    assert "Check the route through the current code and relevant business scenarios" in construction
+    assert "Trace how the current path produces the accepted result" in construction
     assert "before extending the design that relies on it" in construction
     for text in (
-        "Address competing operations when they can change the required result, reusing existing transactions, constraints and synchronization",
-        "Check the relevant framework behavior when the result depends on it",
-        "Locate any remaining defect in the actual path before changing its coordination",
-        "keep the correction within the affected operations",
+        "locate the remaining gap in its actual operations",
+        "Check the effective conditions that can change that result",
+        "separating established behavior from assumptions that still affect the choice",
+        "Select the correction at the responsible boundary and reuse the guarantees already present",
+        "Extend the change to other operations when they participate in the same required behavior",
+        "assessing what each added responsibility contributes and what it costs",
         "Compare the direct route with any proposed expansion using the same accepted result",
     ):
         assert text in construction
@@ -1377,7 +1412,9 @@ def test_plan_method_forms_a_first_design_before_review_repair():
     for text in (
         "# Test Whether the Route Is Sufficient",
         "# Test Whether the Added Responsibilities Are Needed",
-        "Compare under the same facts and obligations",
+        "Compare added responsibilities with the current path under the same accepted outcomes and effective conditions",
+        "a valid local defect does not establish the need for the whole combination",
+        "Preserve changes needed by shared invariants",
         "Compare any stronger guarantee and its continuing cost with what the accepted result actually requires",
         "Distinguish required outcomes, permitted outcomes and implementation preferences",
         "Test alternate entries, concurrency, asynchronous delivery or recovery when the accepted behavior or evidence makes them relevant",

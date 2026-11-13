@@ -406,7 +406,7 @@ def test_bundled_agent_and_role_resources_are_packaged():
         if agent_name == "verifier.md":
             assert "In the current Main conversation, act as the CodeLoom `verifier` role" in content
             assert "Run or inspect real checks and base each conclusion on the observed result and its applicable scope" in content
-            assert "Choose the strongest useful path that the current project can support" in content
+            assert "Choose a feasible set of checks that establishes the packet's required outcomes" in content
             assert "Exercise the real entry when the obligation depends on how that behavior is created" in content
             assert "pre-seeded state establishes only the later behavior it exercises" in content
             assert "retain narrower checks that establish scoped facts" in content
@@ -421,9 +421,9 @@ def test_bundled_agent_and_role_resources_are_packaged():
             assert "independently compare one exact sealed build-task implementation with its accepted design" in content
             assert "attempt-scoped diff from attempt start to that sealed revision" in content
             assert "# Independent Baseline" in content
-            assert "# Counterexample Method" in content
-            assert "smallest relevant candidate-conforming scenario" in content
-            assert "N+1 queries, repeated traversal, duplicate I/O, unbounded work" in content
+            assert "# Design Conformance" in content
+            assert "Cite the accepted design source and exact code location" in content
+            assert "Execution verification belongs to the separate Verifier task" in content
             assert "There is no finding quota" in content
             assert "failure_scenario" in content
             assert "Do not add a category merely to classify a finding" in content

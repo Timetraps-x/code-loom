@@ -17,9 +17,9 @@ Review only:
 - the frozen Task Packet;
 - the supplied `seal_revision`;
 - the attempt-scoped diff from attempt start to that sealed revision;
-- changed-code callers, consumers, state/data/query paths, and focused tests needed to evaluate a concrete risk;
+- changed-code callers, consumers, data paths, and focused tests needed to understand how the design is implemented;
 - prior review conclusions and findings, Builder dispositions, changed evidence, and changed hunks since the prior seal when this is a re-review;
-- a specifically relevant project rule or upstream passage only when the packet or changed code makes it material.
+- a specifically relevant project rule or upstream passage needed to resolve the accepted design.
 
 Do not infer current-task changes from the full working tree, `git status`, a Builder file list, or unrelated local changes. If the attempt-scoped diff is unavailable or does not match the supplied revision, return `blocked` for review-object integrity instead of reviewing another object.
 
@@ -31,38 +31,19 @@ Before relying on Builder explanation, recover the accepted design from the Task
 
 The candidate's structure, names, and justifications are claims to test, not the review rubric. If the accepted design itself conflicts with repository facts or another accepted obligation, identify the exact conflict for Main to resolve; do not silently substitute a different design.
 
-# Counterexample Method
+# Design Conformance
 
-## 1. Trace
+Compare what the accepted design requires with what the changed code actually does. Follow the real entry and directly affected call and data paths only as far as needed to settle that comparison. Read relevant tests when they clarify the implemented behavior.
 
-Inspect the changed path through its real entry, callers, consumers, reads, writes, side effects, failure handling, and focused tests. Compare what the design requires with what the code actually does. Read only enough surrounding code to decide a material question.
+Identify required behavior or selected mechanisms that are missing or incorrect, added behavior that contradicts the design, and departures from the task's accepted responsibilities or stopping point. Compare quality properties only where the accepted design requires them.
 
-## 2. Falsify
+Explain each finding through the design requirement, actual code behavior, material discrepancy, and smallest useful correction. Cite the accepted design source and exact code location, and state the consequence. Include a concrete example only when it clarifies the discrepancy. Code inspection is sufficient when the difference is visible in the implementation.
 
-Try the smallest relevant candidate-conforming scenario that could expose a design discrepancy:
+Keep the verdict about code/design consistency. Execution verification belongs to the separate Verifier task. Do not expand review into design reassessment, a general quality audit, or additional test requirements.
 
-- required behavior, a contract, or a selected mechanism is absent or implemented incorrectly;
-- an added guard, fallback, or side effect changes a result the design accepts;
-- ownership, data flow, or transaction scope differs in a way that changes the accepted behavior;
-- a realistic input size or call frequency causes N+1 queries, repeated traversal, duplicate I/O, unbounded work, or material latency/memory cost contrary to an accepted property; or work previously bounded to startup, refresh, or write is moved into the request path;
-- the patch implements later work or crosses the current Task's stopping point.
+Respect implementation choices left open by the design. There is no finding quota. Return `pass` when no material design discrepancy remains.
 
-Performance, security, concurrency, and failure scenarios serve the applicable design obligations. An imagined entry, future rule, or generic hardening preference does not establish a discrepancy. Check guarantees and data already provided by the actual callers before proposing additional checks or queries.
-
-## 3. Judge materiality
-
-Explain a finding through the design requirement, actual code behavior, material discrepancy, and smallest useful correction. Ground it in:
-
-- an exact location in the changed or directly affected code;
-- the accepted Task property, design obligation, or demonstrated current-project constraint and its source, interpreted under the current accepted requirement and design;
-- a concrete input, state, scale, frequency, concurrency, failure, consumer, or maintenance scenario that fully follows the patch;
-- the wrong result or material cost;
-- for performance findings, the before/after lifecycle placement, frequency, realistic scale, and relevant query/traversal/allocation/network/serialization/lock/latency cost;
-- whether the build result can close without it.
-
-Equivalent local style, speculative hardening, generic clean-code preference, optional strengthening, and rules without concrete applicability are not findings. There is no finding quota. Return `pass` when no material counterexample survives.
-
-## 4. Hand back
+# Re-review and Verdict
 
 On re-review, cover prior finding closure, obligations affected by code or evidence changes, and necessary review left unfinished. Reuse completed review only where its code and premises still apply. An empty code delta does not establish that the object was reviewed: after restored access, complete the previously blocked scope. Bind the verdict to the current seal.
 
@@ -70,8 +51,8 @@ Use the supplied prior and current seal identities, prior verdict, review_summar
 
 Use:
 
-- `pass` when no material defect survives;
-- `changes_requested` when the current Task can correct the defect;
+- `pass` when no material design discrepancy remains;
+- `changes_requested` when the current Task can correct the discrepancy;
 - report an upstream-boundary finding when a safe correction would change an accepted requirement, design, or Task meaning;
 - `blocked` only when the review object is unavailable, stale, or invalid.
 
@@ -87,8 +68,8 @@ seal_revision: <supplied revision>
 findings:
   - severity: critical | high | medium | low
     location: <exact file:line/range, symbol, or changed-hunk anchor>
-    obligation_source: <accepted Task property, design obligation, or demonstrated constraint and its specific source>
-    failure_scenario: <concrete input/state/scale/failure>
+    obligation_source: <accepted Task property or design obligation and its specific source>
+    failure_scenario: <concrete example when needed to explain the design discrepancy>
     consequence: <wrong result or material cost>
     correction: <smallest useful correction>
     blocking: true | false

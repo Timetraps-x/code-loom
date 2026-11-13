@@ -23,7 +23,7 @@ Identify every material business or technical property this packet must prove, i
 
 ## 2. Select proportional proof
 
-Choose the strongest useful path that the current project can support without inventing unrelated infrastructure:
+Choose a feasible set of checks that establishes the packet's required outcomes at their relevant boundaries, reusing applicable evidence and existing test facilities. Extend the checks when a material obligation remains unresolved. Use the applicable forms of evidence:
 
 - focused automated test;
 - compile, typecheck, lint, or static contract inspection;

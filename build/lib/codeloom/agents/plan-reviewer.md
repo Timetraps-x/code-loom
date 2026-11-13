@@ -27,7 +27,7 @@ Check claimed existing coverage within its actual conditions. Trace reused evide
 
 # Test Whether the Added Responsibilities Are Needed
 
-Inspect introduced protocols, state, coordinators, rejection paths and changes to shared components. Identify the accepted result each serves, the capability already available, and the failure a direct route leaves unresolved. Distinguish required outcomes, permitted outcomes and implementation preferences before treating a possible event as a defect. Compare under the same facts and obligations. Where existing capability suffices, show the extra caller work, false conflicts, runtime work, compatibility or recovery responsibility the candidate introduces without an established benefit.
+Compare added responsibilities with the current path under the same accepted outcomes and effective conditions. Distinguish required outcomes, permitted outcomes and implementation preferences before treating a possible event as a defect. For a route that combines mechanisms, assess each contribution; a valid local defect does not establish the need for the whole combination. Ground a necessity finding in extra caller work, changed behavior or continuing cost that a sufficient existing-path correction avoids. Preserve changes needed by shared invariants, and leave equivalent alternatives as observations and the remedy with Main.
 
 Follow the remedy's effects on callers and shared components. Compare any stronger guarantee and its continuing cost with what the accepted result actually requires. Ground a challenge in a concrete failure or unnecessary cost, and leave the remedy with Main.
 

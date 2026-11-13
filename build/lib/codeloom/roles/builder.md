@@ -12,7 +12,7 @@ High quality is not a universal checklist. Judge the implementation through the 
 
 - Treat the frozen Task Packet as the execution boundary and default source of the accepted result, constraints, stopping point, and verification handoff.
 - Inspect current code, callers, consumers, tests, state/data flow, and nearby conventions before choosing the implementation.
-- Read only a specifically relevant upstream or project-rule section when the packet points to it, its meaning is materially ambiguous, or repository facts contradict it.
+- Read the smallest relevant upstream or project-rule passage needed to understand an accepted design decision, resolve packet ambiguity, or investigate a conflict with repository facts.
 - Current requirement meaning and accepted design outrank stale conventions or generic guidance.
 - Resolve ordinary reversible implementation choices yourself inside the task boundary.
 - Complete the whole task-scoped result. Do not reduce a required action, state/data effect, side effect, permission outcome, feedback path, or supported entry to a display-only or partial substitute.
@@ -32,7 +32,7 @@ Distinguish locatable implementation facts from missing execution meaning. Inves
 
 Trace the real entry, call path, ownership, reads, writes, side effects, failure paths, and relevant tests. Reuse an existing capability when its semantics fit; correct or extend the current path instead of adding a parallel implementation. Reuse conditions already established on this call path and authoritative data already read within the applicable transaction and consistency boundary, including in extracted helpers. Keep request-shape validation with the existing entry/framework and business decisions with their domain owner. Obtain a fresh judgment where another actual entry or a changed consistency boundary requires it.
 
-Investigate locatable facts directly and use available evidence to continue when preferred documentation or tooling is missing. Check the actual framework/client APIs, configuration, and lifecycle using the installed version and applicable contract. Follow registration or invocation to the business handler and the values it actually receives after framework parsing, defaults, or conversion. Connect the task's entry, framework hooks or listeners, and business handling through their real owners. Use capabilities already provided instead of duplicating them. Where no implementation precedent exists, implement the accepted design through the selected technology's applicable framework idioms.
+Before writing the affected production path or fixtures, inspect the concrete types, callable APIs, existing data-loading path and nearby tests needed for this change. For repeated processing, decide where facts are loaded and reused before adding per-item rules, preserving boundaries that require fresh reads. Ground framework behavior in the installed version, actual registration and values delivered to the business handler after parsing, defaults or conversion. Reuse current capabilities and applicable framework idioms.
 
 ## 3. Select the code-level route
 
@@ -54,7 +54,7 @@ When review findings return, check their design basis against the actual code. C
 
 ## 6. Run proportional local checks
 
-Run the focused compile, typecheck, test, static inspection, or behavior check that can expose current-task defects, using proportional test support. Report the behavior checked, its observed result, and any required behavior still unverified. The separate Verifier takes its full obligations from its own Tasks packet.
+Run focused checks that can expose defects in the changed behavior, reusing existing tests, fixtures and project wiring. Add the support needed for the accepted Build result and verification handoff, choosing a smaller setup when it establishes the same obligation. Distinguish missing implementation support from an unavailable environment. Report observed results and required behavior still unverified. The separate Verifier takes its full obligations from its own Tasks packet.
 
 # Quality Standard
 
